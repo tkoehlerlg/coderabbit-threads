@@ -1,5 +1,7 @@
 # coderabbit-threads
 
+**TL;DR — your agent walks every open CodeRabbit thread on a PR, fixes what it can (and commits), pushes back where CodeRabbit is wrong, asks you only on judgment calls, and waits for CodeRabbit to react before resolving.**
+
 A Claude Code skill for going through a pull request's open [CodeRabbit](https://coderabbit.ai) review threads and replying to each one in a conversational loop. Triage each thread, post a per-thread reply (not a bulk PR comment), wait for CodeRabbit's reaction, and only resolve once CodeRabbit agrees.
 
 This is the **multi-round conversational counterpart** to the official [`coderabbit:autofix`](https://github.com/coderabbitai/skills) skill. `autofix` applies CodeRabbit's proposed diffs and posts one summary comment. `coderabbit-threads` is what you reach for when you want to acknowledge, push back on, or explicitly defer suggestions thread-by-thread — and have CodeRabbit react.
@@ -73,6 +75,15 @@ Handled 4 threads. Posted 4 replies (3 autonomous, 1 user-chosen).
 ---
 
 ## Why it exists
+
+**TL;DR:**
+
+- A 20-thread CodeRabbit review eats an hour of human time even when most threads are mechanical or already addressed.
+- This skill goes thread-by-thread, replies factually (`Fixed in <sha>`, `Won't fix: <reason>`, `Out-of-scope`), and waits for CodeRabbit to react before resolving.
+- In **auto** mode it actually *fixes* `still-applies` threads in code, commits, and replies — no placeholder "Will fix" promises.
+- It **pushes back** when CodeRabbit is technically wrong (`contested`) instead of just folding.
+- It **asks you only** on the genuine judgment calls (`unclear`, `bot-pushback`, low-confidence `contested`).
+- It detects when CodeRabbit is **paused** on a PR and offers to resume / one-time review / skip.
 
 CodeRabbit reads a PR, posts a review with N threads (sometimes 20+), and then waits. The typical human flow is:
 
@@ -210,8 +221,11 @@ No tokens, no extra config. `cr` uses whatever `gh auth login` configured.
 | `cr proposed-fix <pr-url> <thread-id>`             | Extract just CodeRabbit's `<details><summary>Proposed fix</summary>` diff (no surrounding markdown). Used by the fix-then-reply path. |
 | `cr reply   <pr-url> <thread-id> <body>`           | Post a markdown reply on a thread                             |
 | `cr resolve <pr-url> <thread-id>`                  | Mark a thread resolved (idempotent)                           |
-| `cr status  <pr-url> [--plain]`                    | PR state + CodeRabbit activity summary                        |
+| `cr status  <pr-url> [--plain]`                    | PR state + CodeRabbit activity summary (incl. `mode`, `paused_reason`, `pr_author`, `human_open_thread_count`) |
 | `cr check   <pr-url> <thread-id> <our-comment-id>` | Did CodeRabbit reply after `our-comment-id`? Returns awaiting / bot_replied |
+| `cr resume <pr-url>` / `cr review <pr-url>` / `cr full-review <pr-url>` | Post `@coderabbitai resume` / `review` / `full review` as a PR comment (auto-runnable). Used by the paused-mode pre-flight dialog. |
+| `cr resolve-all <pr-url> --confirm`                | Post `@coderabbitai resolve` (mass-close every open CodeRabbit thread). **Explicit-allowance.** |
+| `cr pause <pr-url> --confirm`                      | Post `@coderabbitai pause` (stop CodeRabbit reviewing future pushes). **Explicit-allowance.** |
 
 Filters for `cr threads`: `open` (default), `unresolved`, `outdated`, `pushback`, `all`.
 

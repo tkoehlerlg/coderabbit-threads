@@ -263,11 +263,12 @@ Check the PR's state and CodeRabbit activity. Default output is JSON; `--plain` 
 
 ```
 OPEN · ready · last bot activity 12d ago
-MERGED · ready · last bot activity 21h ago · bot reviewing
+OPEN · ready · last bot activity 14m ago · paused (branch under active development)
+OPEN · ready · last bot activity 21h ago · bot reviewing · 3 human-initiated thread(s)
 CLOSED · draft · no bot activity
 ```
 
-Format: `<state> · <draft|ready> · <relative-time> [· bot reviewing]`. The `bot reviewing` suffix appears only when `in_progress` is true. Time scales to minutes / hours / days. Use this in shell prompts, quick checks, or pre-flight messages in the workflow.
+Format: `<state> · <draft|ready> · <relative-time> [· bot reviewing] [· paused (<reason>)] [· N human-initiated thread(s)]`. Each suffix is conditional. Time scales to minutes / hours / days. Use this in shell prompts, quick checks, or pre-flight messages in the workflow.
 
 ### Output
 
@@ -279,7 +280,11 @@ Format: `<state> · <draft|ready> · <relative-time> [· bot reviewing]`. The `b
   "closed": false,
   "in_progress": false,
   "last_active_at": "2026-05-12T14:32:00Z",
-  "minutes_since_active": 47
+  "minutes_since_active": 47,
+  "mode": "reactive",
+  "paused_reason": null,
+  "pr_author": "tkoehlerlg",
+  "human_open_thread_count": 0
 }
 ```
 
@@ -290,6 +295,10 @@ Format: `<state> · <draft|ready> · <relative-time> [· bot reviewing]`. The `b
 - `in_progress`: `true` when any CodeRabbit top-level comment or review body matches `Come back again in a few minutes` (the bot's own in-progress signal).
 - `last_active_at`: ISO-8601 timestamp of the most recent CodeRabbit comment or review on the PR. `null` if none.
 - `minutes_since_active`: integer minutes between now and `last_active_at`. `null` if `last_active_at` is `null` or timestamp parsing failed.
+- `mode`: CodeRabbit's review posture — one of `reactive` (CodeRabbit reviews every push), `paused` (CodeRabbit has been paused on this PR), `unknown` (no signal). Detected by walking CodeRabbit comments/reviews newest-first for the markers `review paused by coderabbit.ai`, `review resumed by coderabbit.ai`, or normal-review markers (`Actionable comments posted`, `Recent review info`, etc.). Newest match wins.
+- `paused_reason`: When `mode == "paused"`, the first line of CodeRabbit's `## Reviews paused` body (e.g. "It looks like this branch is under active development."). `null` otherwise.
+- `pr_author`: GitHub login of the PR author. Used by the skill to differentiate the user's own replies from teammate comments. `null` if not resolvable.
+- `human_open_thread_count`: Count of open (unresolved + not-outdated) review threads whose root comment is **not** authored by CodeRabbit. The skill ignores these threads but surfaces the count so users know inline reviews from teammates exist.
 
 ### Pre-flight pattern
 
@@ -304,6 +313,50 @@ esac
 [ "$(jq -r '.is_draft' <<<"$status")" = "true" ] && \
   echo "📝 PR is a draft; CodeRabbit doesn't review drafts. Mark ready for review first." && exit 0
 ```
+
+## `@coderabbitai` PR-level commands
+
+Five `cr` subcommands that post a `@coderabbitai <command>` slash command as a PR-level issue comment. CodeRabbit acts on it the same way as if a human typed the command directly.
+
+```
+cr resume       <pr-url>            # @coderabbitai resume       (auto-runnable)
+cr review       <pr-url>            # @coderabbitai review       (auto-runnable)
+cr full-review  <pr-url>            # @coderabbitai full review  (auto-runnable)
+cr resolve-all  <pr-url> --confirm  # @coderabbitai resolve      (explicit-allowance)
+cr pause        <pr-url> --confirm  # @coderabbitai pause        (explicit-allowance)
+```
+
+### Permission classes
+
+| Subcommand | Class | Reasoning |
+|---|---|---|
+| `cr resume` | Auto | Restores normal posture; reversible. |
+| `cr review` | Auto | One-time scan; output is informational. |
+| `cr full-review` | Auto | Same as `cr review`, rescan-all scope. |
+| `cr resolve-all` | **Explicit-allowance** | Mass-closes every open thread. CLI requires `--confirm` and the skill **never** sticky-approves this between threads or runs. |
+| `cr pause` | **Explicit-allowance** | Stops CodeRabbit from reviewing every future push to this PR. Same `--confirm` + never-sticky rule. |
+
+The `--confirm` flag on the explicit-allowance pair is a belt-and-suspenders CLI gate. Without it, the subcommand refuses (exit 1) and prints the rationale, even if the agent's permission gate elsewhere is bypassed.
+
+### Output (uniform across all five)
+
+```json
+{
+  "command": "@coderabbitai resume",
+  "posted_at": "2026-05-12T15:00:00Z",
+  "comment_id": 123456
+}
+```
+
+`comment_id` can be passed to a future `cr check` if you want to detect CodeRabbit's reaction.
+
+### Exit codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | Comment posted successfully |
+| 1 | Usage error, PR not found, or refusing without `--confirm` (explicit-allowance commands) |
+| 2 | Auth / network / API error |
 
 ## `cr check`
 

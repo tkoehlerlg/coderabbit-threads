@@ -2,7 +2,7 @@
 name: coderabbit-threads
 description: Go through a PR's open CodeRabbit review threads, inspect what CodeRabbit wants (including its proposed-fix diffs), and reply per-thread in a conversational loop. Use when handling CodeRabbit feedback across multiple review rounds, when threads need per-thread replies (not a bulk PR summary), when you want to read CodeRabbit's proposed fixes without applying them, when you need to surface CodeRabbit pushback, or when you want to auto-close threads only after CodeRabbit agrees. Distinct from coderabbit:autofix, which applies fixes and posts one summary comment.
 metadata:
-  version: "0.2.0"
+  version: "0.3.0"
   triggers:
     - coderabbit.?threads
     - cr.?threads
@@ -68,6 +68,13 @@ cr reply        <pr-url> <thread-id> <body>
 cr resolve      <pr-url> <thread-id>
 cr status       <pr-url> [--plain]
 cr check        <pr-url> <thread-id> <our-comment-id>
+
+# @coderabbitai PR-level commands (post a slash command as a PR comment):
+cr resume       <pr-url>            # auto-runnable (subject to MODE)
+cr review       <pr-url>            # auto-runnable
+cr full-review  <pr-url>            # auto-runnable
+cr resolve-all  <pr-url> --confirm  # EXPLICIT-ALLOWANCE — mass-closes ALL open threads
+cr pause        <pr-url> --confirm  # EXPLICIT-ALLOWANCE — stops CodeRabbit reviewing future pushes
 ```
 
 At the start of the skill, locate `cr`:
@@ -138,6 +145,34 @@ in_progress=$(jq -r '.in_progress' <<<"$pr_status")
 - `state == "CLOSED"` (not merged) → Inform "⛔ PR is closed without merge — nothing to do." EXIT.
 - `is_draft == true` → Inform "📝 PR is a draft; CodeRabbit doesn't review drafts. Mark ready for review first." EXIT.
 - `in_progress == true` → Inform "⏳ CodeRabbit review in progress, try again in a few minutes." EXIT.
+
+#### Paused-mode dialog
+
+`cr status` returns `mode: 'reactive' | 'paused' | 'unknown'`. When `mode == "paused"`, CodeRabbit has been paused on this PR (auto-paused due to active development, or user-paused via `@coderabbitai pause`). Before walking threads, ask the user which posture they want:
+
+```
+mode=$(jq -r '.mode' <<<"$pr_status")
+paused_reason=$(jq -r '.paused_reason // ""' <<<"$pr_status")
+```
+
+If `mode == "paused"`, ask:
+
+> CodeRabbit is paused on this PR. <paused_reason if set>
+>
+> - 🔁 **Resume** — flip back to reactive (CodeRabbit reviews every new push)
+> - 🎯 **One-time review** — fresh review on the current state; CodeRabbit stays paused after
+> - ➡️ **Skip** — go straight to existing open threads
+
+Routes:
+- **Resume** → `cr resume "$pr_url"`. Re-fetch `cr status`. Continue.
+- **One-time review** → `cr review "$pr_url"`. Poll `cr status` until `in_progress == false`. Re-fetch threads. Continue.
+- **Skip** (default) → Continue to existing open threads with no posture change.
+
+When `mode == "unknown"` → behave like `reactive` (no prompt). Don't bother the user with "I couldn't tell".
+
+#### Human-initiated thread count
+
+`cr status` also returns `human_open_thread_count`. This skill only handles CodeRabbit-rooted threads, but threads opened by human reviewers exist on the PR and the user should know they're being skipped. Surface this count in Step 5's categorized summary (see below).
 
 ```bash
 threads=$(cr threads "$pr_url" --filter open)
@@ -237,9 +272,14 @@ After triage in Step 4, group the threads by triage label and show one line per 
   ❓  unclear         1   couldn't triage from the diff …             asking you …
   💬  bot-pushback    1   CodeRabbit replied to your last reply …     asking you …
 
+Also on this PR (this skill doesn't handle these):
+  👤  human-initiated  3   inline reviews from teammates …            skipped — open in GitHub
+
 Skipped this run (already-closed, surfaced for reference only):
   📜  resolved        4   not shown unless you ask …
 ```
+
+The `human-initiated` line shows only when `human_open_thread_count > 0` (from Step 3's `cr status`). Don't list those threads in detail — the count is sufficient.
 
 The categorized summary makes the agent's plan explicit *before* anything happens: which threads will get autonomous replies, which will pause for you, which were excluded as resolved. Counts of 0 are omitted to keep the block tight.
 
@@ -527,6 +567,15 @@ If the user agrees, store the choice and skip the prompt for every subsequent oc
 **Scope is one skill run, not persistent.** The next invocation starts fresh; the user re-states their preference (or relies on the defaults). Don't write sticky answers to disk — they belong to the conversational state of this run.
 
 **Never make a `no` sticky.** A `no` answer to a single prompt means "not this one"; it does not generalize. Sticky only fires off a `yes` (or a specific-template choice).
+
+**Never sticky for `cr resolve-all` or `cr pause`.** These two `@coderabbitai` PR-level commands are deliberately exempted from the sticky-approvals pattern. Each is irreversible at PR scope:
+
+- `cr resolve-all` mass-closes **every** open CodeRabbit thread with one comment. A sticky `yes` from a previous run would let the agent close every thread on the next PR without asking — too much leverage.
+- `cr pause` stops CodeRabbit from reviewing **all future pushes** to the PR. A sticky `yes` would silently disable the reviewer across runs.
+
+For both: **ask the user explicitly every time, and never offer the "use this for the rest of the run?" follow-up.** The CLI also refuses without `--confirm`, so the agent's explicit-allowance gate has a second safety at the script layer.
+
+The auto-runnable commands (`cr resume`, `cr review`, `cr full-review`) are subject to the normal `MODE` gate (together vs. auto) but don't trigger explicit-allowance prompts — they're reversible or read-only.
 
 ## Reply Templates
 

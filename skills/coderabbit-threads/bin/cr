@@ -335,8 +335,16 @@ cmd_status() {
           isDraft
           merged
           closed
+          author{login}
           comments(last:50){nodes{author{login} body createdAt}}
           reviews(last:50){nodes{author{login} body submittedAt}}
+          reviewThreads(first:100){
+            nodes{
+              isResolved
+              isOutdated
+              comments(first:1){nodes{author{login}}}
+            }
+          }
         }
       }
     }' 2>/dev/null)
@@ -347,13 +355,23 @@ cmd_status() {
   fi
   [ $rc -ne 0 ] && api_die "status query failed (gh exit $rc)"
 
-  local pr_state pr_is_draft pr_merged pr_closed
+  local pr_state pr_is_draft pr_merged pr_closed pr_author human_count
   pr_state=$(jq -r '.data.repository.pullRequest.state' <<<"$response")
   pr_is_draft=$(jq -r '.data.repository.pullRequest.isDraft' <<<"$response")
   pr_merged=$(jq -r '.data.repository.pullRequest.merged' <<<"$response")
   pr_closed=$(jq -r '.data.repository.pullRequest.closed' <<<"$response")
+  pr_author=$(jq -r '.data.repository.pullRequest.author.login // ""' <<<"$response")
 
-  local in_progress last_active now mins
+  # Count OPEN review threads whose root comment is NOT authored by CodeRabbit.
+  # The skill ignores these but surfaces the count so users know they exist.
+  human_count=$(jq -r '
+    def is_bot($a): ($a == "coderabbitai" or $a == "coderabbit" or $a == "coderabbitai[bot]" or $a == "coderabbit[bot]");
+    (.data.repository.pullRequest.reviewThreads.nodes // [])
+    | map(select(.isResolved == false and .isOutdated == false))
+    | map(select((.comments.nodes // [])[0]?.author?.login // "" | is_bot(.) | not))
+    | length' <<<"$response")
+
+  local in_progress last_active now mins mode paused_reason
   in_progress=$(jq -r '
     def is_bot($a): ($a == "coderabbitai" or $a == "coderabbit" or $a == "coderabbitai[bot]" or $a == "coderabbit[bot]");
     (([.data.repository.pullRequest.comments.nodes[]?,
@@ -369,6 +387,41 @@ cmd_status() {
      (.data.repository.pullRequest.reviews.nodes[]? | select(is_bot(.author.login)) | .submittedAt)]
     | map(select(. != null))
     | sort | last // ""' <<<"$response")
+
+  # mode + paused_reason — walk CodeRabbit comments/reviews newest-first, first marker wins.
+  # "review resumed by coderabbit.ai" or any normal-review marker → reactive.
+  # "review paused by coderabbit.ai" → paused; extract reason from body.
+  # Nothing matched → unknown.
+  mode=$(jq -r '
+    def is_bot($a): ($a == "coderabbitai" or $a == "coderabbit" or $a == "coderabbitai[bot]" or $a == "coderabbit[bot]");
+    [(.data.repository.pullRequest.comments.nodes[]? | select(is_bot(.author.login)) | {body, t: .createdAt}),
+     (.data.repository.pullRequest.reviews.nodes[]? | select(is_bot(.author.login)) | {body, t: .submittedAt})]
+    | sort_by(.t) | reverse
+    | map(.body // "")
+    | first(.[] | (
+        if test("review resumed by coderabbit\\.ai"; "i") then "reactive"
+        elif test("review paused by coderabbit\\.ai"; "i") then "paused"
+        elif test("Recent review info|actionable comments were generated|Actionable comments posted|Reviewing files that changed"; "i") then "reactive"
+        else empty
+        end))
+    // "unknown"' <<<"$response")
+
+  if [ "$mode" = "paused" ]; then
+    paused_reason=$(jq -r '
+      def is_bot($a): ($a == "coderabbitai" or $a == "coderabbit" or $a == "coderabbitai[bot]" or $a == "coderabbit[bot]");
+      [(.data.repository.pullRequest.comments.nodes[]? | select(is_bot(.author.login)) | {body, t: .createdAt}),
+       (.data.repository.pullRequest.reviews.nodes[]? | select(is_bot(.author.login)) | {body, t: .submittedAt})]
+      | sort_by(.t) | reverse
+      | map(.body // "")
+      | map(select(test("review paused by coderabbit\\.ai"; "i")))
+      | first // ""
+      | capture("##\\s*Reviews paused\\s*\\n+(?:>\\s*)?(?<r>[^\\n]+)"; "i")
+      | .r // ""
+      | gsub("^[>\\s]+|\\s+$"; "")
+      | gsub("\\s+"; " ")' <<<"$response")
+  else
+    paused_reason=""
+  fi
 
   if [ -n "$last_active" ]; then
     now=$(date -u +%s)
@@ -387,7 +440,7 @@ cmd_status() {
   fi
 
   if [ "$plain" -eq 1 ]; then
-    local draft_seg ip_word age_word
+    local draft_seg ip_word age_word mode_seg
     # Only emit draft/ready on OPEN — on MERGED/CLOSED it's redundant noise.
     if [ "$pr_state" = "OPEN" ]; then
       [ "$pr_is_draft" = "true" ] && draft_seg="draft · " || draft_seg="ready · "
@@ -404,7 +457,22 @@ cmd_status() {
     else
       age_word="last bot activity $((mins/1440))d ago"
     fi
-    printf '%s · %s%s%s\n' "$pr_state" "$draft_seg" "$age_word" "$ip_word"
+    if [ "$mode" = "paused" ]; then
+      if [ -n "$paused_reason" ]; then
+        mode_seg=" · paused ($paused_reason)"
+      else
+        mode_seg=" · paused"
+      fi
+    else
+      mode_seg=""
+    fi
+    local human_seg
+    if [ "$human_count" -gt 0 ] 2>/dev/null; then
+      human_seg=" · $human_count human-initiated thread(s)"
+    else
+      human_seg=""
+    fi
+    printf '%s · %s%s%s%s%s\n' "$pr_state" "$draft_seg" "$age_word" "$ip_word" "$mode_seg" "$human_seg"
     return
   fi
 
@@ -413,6 +481,8 @@ cmd_status() {
       --arg state "$pr_state" --argjson is_draft "$pr_is_draft" \
       --argjson merged "$pr_merged" --argjson closed "$pr_closed" \
       --argjson ip "$in_progress" --arg la "$last_active" \
+      --arg mode "$mode" --arg reason "$paused_reason" \
+      --arg author "$pr_author" --argjson hc "$human_count" \
       '{
         state: $state,
         is_draft: $is_draft,
@@ -420,13 +490,19 @@ cmd_status() {
         closed: $closed,
         in_progress: $ip,
         last_active_at: (if $la == "" then null else $la end),
-        minutes_since_active: null
+        minutes_since_active: null,
+        mode: $mode,
+        paused_reason: (if $reason == "" then null else $reason end),
+        pr_author: (if $author == "" then null else $author end),
+        human_open_thread_count: $hc
       }'
   else
     jq -nc \
       --arg state "$pr_state" --argjson is_draft "$pr_is_draft" \
       --argjson merged "$pr_merged" --argjson closed "$pr_closed" \
       --argjson ip "$in_progress" --arg la "$last_active" --argjson m "$mins" \
+      --arg mode "$mode" --arg reason "$paused_reason" \
+      --arg author "$pr_author" --argjson hc "$human_count" \
       '{
         state: $state,
         is_draft: $is_draft,
@@ -434,7 +510,11 @@ cmd_status() {
         closed: $closed,
         in_progress: $ip,
         last_active_at: $la,
-        minutes_since_active: $m
+        minutes_since_active: $m,
+        mode: $mode,
+        paused_reason: (if $reason == "" then null else $reason end),
+        pr_author: (if $author == "" then null else $author end),
+        human_open_thread_count: $hc
       }'
   fi
 }
@@ -672,6 +752,78 @@ cmd_check() {
       end' <<<"$response"
 }
 
+# --- @coderabbitai PR-level commands ---------------------------------------
+
+# Post `@coderabbitai <command>` as a PR-level issue comment.
+# Stdout: {command, posted_at, comment_id} — same shape across all five command subcommands.
+post_coderabbit_command() {
+  local pr_url="$1" command="$2"
+  parse_pr_url "$pr_url"
+  local body="@coderabbitai $command"
+  local response
+  set +e
+  response=$(gh api "repos/$OWNER/$REPO/issues/$PR_NUMBER/comments" -f body="$body" 2>/dev/null)
+  local rc=$?
+  set -e
+  [ $rc -ne 0 ] && api_die "comment POST failed (gh exit $rc)"
+  jq -c --arg cmd "$body" '{command: $cmd, posted_at: .created_at, comment_id: .id}' <<<"$response" \
+    || api_die "unexpected POST response shape"
+}
+
+cmd_resume() {
+  local pr_url="${1:-}"
+  [ -z "$pr_url" ] && die "usage: cr resume <pr-url>"
+  post_coderabbit_command "$pr_url" "resume"
+}
+
+cmd_review() {
+  local pr_url="${1:-}"
+  [ -z "$pr_url" ] && die "usage: cr review <pr-url>"
+  post_coderabbit_command "$pr_url" "review"
+}
+
+cmd_full_review() {
+  local pr_url="${1:-}"
+  [ -z "$pr_url" ] && die "usage: cr full-review <pr-url>"
+  post_coderabbit_command "$pr_url" "full review"
+}
+
+# Explicit-allowance class: requires --confirm flag. Mass-closes every open thread on the PR.
+cmd_resolve_all() {
+  local pr_url="" confirm=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --confirm) confirm=1; shift ;;
+      --*) die "unknown flag: $1" ;;
+      *)
+        [ -z "$pr_url" ] && pr_url="$1" || die "too many positional args: $1"
+        shift ;;
+    esac
+  done
+  [ -z "$pr_url" ] && die "usage: cr resolve-all <pr-url> --confirm"
+  [ "$confirm" -eq 0 ] && \
+    die "refusing without --confirm — cr resolve-all mass-closes every open CodeRabbit thread on the PR (explicit-allowance command)"
+  post_coderabbit_command "$pr_url" "resolve"
+}
+
+# Explicit-allowance class: requires --confirm flag. Stops CodeRabbit from reviewing future pushes.
+cmd_pause() {
+  local pr_url="" confirm=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --confirm) confirm=1; shift ;;
+      --*) die "unknown flag: $1" ;;
+      *)
+        [ -z "$pr_url" ] && pr_url="$1" || die "too many positional args: $1"
+        shift ;;
+    esac
+  done
+  [ -z "$pr_url" ] && die "usage: cr pause <pr-url> --confirm"
+  [ "$confirm" -eq 0 ] && \
+    die "refusing without --confirm — cr pause stops CodeRabbit from reviewing future pushes to this PR (explicit-allowance command)"
+  post_coderabbit_command "$pr_url" "pause"
+}
+
 # --- dispatch --------------------------------------------------------------
 
 cmd="${1:-}"; shift || true
@@ -683,6 +835,11 @@ case "$cmd" in
   check)        cmd_check "$@" ;;
   context)      cmd_context "$@" ;;
   proposed-fix) cmd_proposed_fix "$@" ;;
+  resume)       cmd_resume "$@" ;;
+  review)       cmd_review "$@" ;;
+  full-review)  cmd_full_review "$@" ;;
+  resolve-all)  cmd_resolve_all "$@" ;;
+  pause)        cmd_pause "$@" ;;
   ""|-h|--help|help)
     cat <<'EOF'
 cr — CodeRabbit review-thread CLI
@@ -695,6 +852,13 @@ Usage:
   cr resolve      <pr-url> <thread-id>
   cr status       <pr-url> [--plain]
   cr check        <pr-url> <thread-id> <our-comment-id>
+
+@coderabbitai PR-level commands (post a slash command as a PR comment):
+  cr resume       <pr-url>            # @coderabbitai resume       (auto-runnable)
+  cr review       <pr-url>            # @coderabbitai review       (auto-runnable)
+  cr full-review  <pr-url>            # @coderabbitai full review  (auto-runnable)
+  cr resolve-all  <pr-url> --confirm  # @coderabbitai resolve      (explicit-allowance — mass-closes ALL open threads)
+  cr pause        <pr-url> --confirm  # @coderabbitai pause        (explicit-allowance — stops CodeRabbit reviewing future pushes)
 
 Filters for `cr threads` (default: open):
   open        unresolved AND not outdated  (the actionable set)

@@ -4,6 +4,7 @@
 *~
 .vscode/
 .idea/
+.claude/
 node_modules/
 
 # Transient retrospective artifacts — never commit

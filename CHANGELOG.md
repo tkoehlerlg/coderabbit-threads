@@ -6,6 +6,50 @@ All notable changes to `coderabbit-threads` are tracked here. The format follows
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-05-12
+
+CodeRabbit-state awareness + PR-level commands.
+
+Today the skill assumes CodeRabbit is reactively reviewing. v0.3 makes the agent aware of the PR's CodeRabbit posture (`reactive` / `paused`) and gives it tools to *change* that posture — with a permission model that distinguishes safe-to-auto-run from explicit-allowance-every-time.
+
+### Added — paused-state detection
+
+- **`cr status` now returns `mode` + `paused_reason`.** Detection walks CodeRabbit comments/reviews newest-first looking for `review paused by coderabbit.ai` / `review resumed by coderabbit.ai` / normal-review markers (`Actionable comments posted`, `Recent review info`, `Reviewing files that changed`). Newest match wins. `unknown` when no signal is found.
+- **`cr status --plain`** gains a ` · paused (<reason>)` suffix when paused, and a ` · N human-initiated thread(s)` suffix when humans have opened inline review threads.
+- **`pr_author`** field — the PR author's GitHub login, surfaced so the skill can later differentiate the user's own replies from teammate comments on the same thread (full mixed-thread accuracy deferred to v0.4).
+- **`human_open_thread_count`** field — count of open review threads whose root comment is not authored by CodeRabbit. The skill still ignores those threads, but the count is surfaced so users know inline reviews from teammates exist.
+
+### Added — `@coderabbitai` PR-level commands
+
+Five `cr` subcommands that post `@coderabbitai <command>` as a PR-level issue comment, with a permission model split into two classes:
+
+| Subcommand | Class | Reasoning |
+|---|---|---|
+| `cr resume` | Auto-runnable | Restores normal posture; reversible |
+| `cr review` | Auto-runnable | One-time scan; informational output |
+| `cr full-review` | Auto-runnable | Same as review, rescan-all scope |
+| `cr resolve-all <pr> --confirm` | **Explicit-allowance** | Mass-closes every open thread |
+| `cr pause <pr> --confirm` | **Explicit-allowance** | Stops CodeRabbit reviewing future pushes |
+
+The two explicit-allowance commands **require a `--confirm` flag at the CLI layer** (refuses with a clear stderr message and exit 1 otherwise) AND are **never sticky-approved** by the agent — every invocation asks the user fresh, regardless of prior yeses in the same run. This deliberately breaks the otherwise-universal sticky-approvals pattern for these two cases only.
+
+All five subcommands emit a uniform `{command, posted_at, comment_id}` JSON shape — same shape as `cr reply` so a `comment_id` can be passed into a future `cr check` if needed.
+
+### Added — SKILL.md workflow updates
+
+- **Step 3 paused-mode dialog.** When `mode == "paused"`, before walking threads the skill asks: 🔁 Resume / 🎯 One-time review / ➡️ Skip. Routes wire to `cr resume` / `cr review` respectively, or fall through to the normal thread loop.
+- **Step 5 categorized summary** gains a `human-initiated  N  skipped — open in GitHub` line whenever `human_open_thread_count > 0`. Count only — no thread details (this skill explicitly doesn't handle them).
+- **Sticky Approvals section** carves out `cr resolve-all` and `cr pause`: explicit-allowance every time, never offer "use this for the rest of the run?".
+
+### Added — documentation
+
+- **TL;DR** added to README top and `## Why it exists` section (5 quick bullets summarizing the skill's contract for readers who don't want to read the full intro).
+
+### Known limitations
+
+- **Mixed-thread accuracy.** Today, when CodeRabbit opens a thread and a teammate (not the PR author) comments, the timeline-based `bot-pushback` / `awaiting-bot` labels treat the teammate's comment as if it were the user's. `pr_author` is now surfaced via `cr status` so the skill *could* differentiate, but the label logic itself isn't yet updated. Deferred to v0.4.
+- **Comments per thread capped at 100.** Edge case — threads with >100 comments truncate to first 100 silently. Accepted as v0.2 design decision.
+
 ## [0.2.0] — 2026-05-12
 
 Multi-round PR support + diff-first fix-then-reply + documented support for other agent runtimes.
