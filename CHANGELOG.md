@@ -31,7 +31,7 @@ Docs-only polish — no behaviour, output, or interface changes.
 ### Changed
 
 - **README intro shrunk to two paragraphs.** Folded the TL;DR sentence into the lead so the opener is one bold framing line plus an autofix-positioning paragraph, instead of three overlapping blocks.
-- **Friction-point framing** added to the intro (one closing line on the lead paragraph) and as a standalone paragraph in `## Why it exists`. Names the problem the skill fixes — most coding agents don't push back on CodeRabbit themselves, which makes the human the copy-paster between bot (CodeRabbit) and code.
+- **Friction-point framing** added to the intro (one closing line on the lead paragraph) and as a standalone paragraph in `## Why it exists`. Names the problem the skill fixes — most coding agents don't push back on CodeRabbit themselves, which makes the human the copy-paster between CodeRabbit and their agent.
 - **Editorial pass across README + SKILL.md.** Cut tail-end em-dash appendages, split overloaded sentences, replaced generic-line-after-colon constructions with concrete openers, trimmed filler.
 
 ### Added

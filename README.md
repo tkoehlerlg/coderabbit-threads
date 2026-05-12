@@ -4,7 +4,7 @@
 [![Works with CodeRabbit](https://img.shields.io/badge/CodeRabbit-companion-FF6B35)](https://coderabbit.ai)
 [![Version](https://img.shields.io/github/v/tag/tkoehlerlg/coderabbit-threads?label=version&color=blue)](https://github.com/tkoehlerlg/coderabbit-threads/releases)
 
-**A Claude Code skill that walks every open [CodeRabbit](https://coderabbit.ai) review thread on a PR and replies to each one conversationally.** Your agent triages each thread, fixes what it can and commits, pushes back when CodeRabbit is wrong, asks you only on judgment calls, and resolves only once CodeRabbit agrees. So you stop being the copy-paster between agent and bot.
+**A Claude Code skill that walks every open [CodeRabbit](https://coderabbit.ai) review thread on a PR and replies to each one conversationally.** Your agent triages each thread, fixes what it can and commits, pushes back when CodeRabbit is wrong, asks you only on judgment calls, and resolves only once CodeRabbit agrees. So you stop being the copy-paster between CodeRabbit and your agent.
 
 This is the multi-round conversational counterpart to the official [`coderabbit:autofix`](https://github.com/coderabbitai/skills) skill, which applies proposed diffs and posts one summary comment. Reach for `coderabbit-threads` when you want to acknowledge, push back, or explicitly defer suggestions thread by thread.
 
@@ -191,7 +191,7 @@ All GitHub API interaction goes through the bundled `cr` CLI. The skill never co
 - It **asks you only** on the genuine judgment calls (`unclear`, `bot-pushback`, low-confidence `contested`).
 - It detects when CodeRabbit has been paused on a PR and lets you resume, run a one-time review, or skip straight to existing threads.
 
-**The friction point this fixes.** Most coding agents don't push back on CodeRabbit themselves. They apply whatever it suggests or punt the decision back to you, which turns *you* into the copy-paster between bot and code: evaluating each claim, dictating each reply, then pasting it back. You're a developer, not a relay. `coderabbit-threads` evaluates CodeRabbit's claims the way you would, fixes what's worth fixing, and pushes back when the bot is wrong, so you only weigh in on the genuine judgment calls.
+**The friction point this fixes.** Most coding agents don't push back on CodeRabbit themselves. They apply whatever it suggests or punt the decision back to you, which turns *you* into the copy-paster between CodeRabbit and your agent: reading each claim, deciding whether to act, dictating each reply, then handing it back. You're a developer, not a relay. `coderabbit-threads` evaluates CodeRabbit's claims the way you would, fixes what's worth fixing, and pushes back when the bot is wrong, so you only weigh in on the genuine judgment calls.
 
 CodeRabbit reads a PR, posts a review with N threads (sometimes 20+), and then waits. The typical human flow is:
 
