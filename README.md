@@ -108,15 +108,13 @@ All GitHub API interaction goes through the bundled `cr` CLI — the skill never
 
 ### Via Claude Code plugin marketplace
 
-> **Note:** Claude Code's `/plugin marketplace add` expects a repo with `.claude-plugin/marketplace.json`. This repo currently only ships `.claude-plugin/plugin.json` for a single skill. A `marketplace.json` will land alongside additional skills in the future (see [Roadmap](#roadmap)). For now, use the manual install below.
-
-Once the marketplace file is in place:
-
 ```text
 /plugin marketplace add tkoehlerlg/coderabbit-threads
 /plugin install coderabbit-threads@coderabbit-threads
 /reload-plugins
 ```
+
+The repo ships a single-plugin `.claude-plugin/marketplace.json` so the `/plugin marketplace add` slash command points at this repo directly. After install, Claude Code will discover the skill the next time you ask it to walk through a PR's CodeRabbit threads.
 
 ### Manual install
 
@@ -235,7 +233,7 @@ A common workflow is to run `coderabbit:autofix` first to land the easy wins, th
 
 Known gaps and intentional v1 scoping:
 
-- **Marketplace bundling.** Repo currently ships only `plugin.json`. A `.claude-plugin/marketplace.json` will land when additional skills join this repo, so the `/plugin marketplace add` path works in addition to manual install.
+- **Other agent runtimes (Cursor, Codex, Copilot CLI).** The `SKILL.md` is platform-aware (`AskUserQuestion` and `ScheduleWakeup` are documented as Claude Code primitives with fallback notes), but the runtimes' own plugin formats aren't published yet. Manual install + invoking `cr` directly works on any platform with `gh` + `jq`.
 - **`resolved`-label precedence.** Already handled in `cr` — closed threads never surface as `bot-pushback` even if timestamp ordering would suggest it. This rule lives in [`reference.md` § Computed `label` values](skills/coderabbit-threads/reference.md#computed-label-values).
 - **Polling backoff.** Step 7 polls at a fixed 60s interval up to 5 min. Adaptive backoff (start fast, slow down) is a future improvement.
 - **No auto-created issues.** When the user marks a thread `out-of-scope`, the reply notes it but no Linear/Jira/GitHub issue is created. Users do that themselves; the skill stays narrow.

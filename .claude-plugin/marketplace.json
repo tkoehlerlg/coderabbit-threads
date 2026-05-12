@@ -1,0 +1,20 @@
+{
+  "name": "coderabbit-threads",
+  "description": "Single-plugin marketplace for the coderabbit-threads skill — walk a PR's open CodeRabbit review threads conversationally, with autonomous replies for the obvious cases and an ask-once self-close policy for the rest.",
+  "owner": {
+    "name": "Torben Köhler",
+    "url": "https://github.com/tkoehlerlg"
+  },
+  "plugins": [
+    {
+      "name": "coderabbit-threads",
+      "description": "Walk through a PR's open CodeRabbit review threads, triage each one, and reply per-thread — the conversational counterpart to coderabbit:autofix.",
+      "version": "0.1.0",
+      "source": "./",
+      "author": {
+        "name": "Torben Köhler",
+        "url": "https://github.com/tkoehlerlg"
+      }
+    }
+  ]
+}
