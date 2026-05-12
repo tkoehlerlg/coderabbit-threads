@@ -492,11 +492,30 @@ $last_bot_body
 
 EOF
     fi
-    cat <<'EOF'
+    # Detect a CodeRabbit-style "Proposed <something> fix" / "Suggested fix" block in the last bot body.
+    local has_proposed_fix=0
+    if printf '%s' "$last_bot_body" | grep -qiE '<summary>[^<]*\b(proposed|suggested)[^<]*fix[^<]*</summary>'; then
+      has_proposed_fix=1
+    fi
 
-> Need more detail (proposed diff, all rounds of back-and-forth)? Re-run with `cr context <pr-url> <thread-id> --full`.
+    if [ "$has_proposed_fix" -eq 1 ]; then
+      cat <<'EOF'
+
+> [!TIP]
+> **This thread contains a proposed-fix diff** under `<details><summary>Proposed fix</summary>` in the bot's body. The default mode above shows only the distilled AI-prompt description; the actual diff is hidden until you run:
+>
+> ```bash
+> cr context <pr-url> <thread-id> --full
+> ```
 
 EOF
+    else
+      cat <<'EOF'
+
+> Need more detail (all rounds of back-and-forth)? Re-run with `cr context <pr-url> <thread-id> --full`.
+
+EOF
+    fi
   fi
 
   cat <<EOF

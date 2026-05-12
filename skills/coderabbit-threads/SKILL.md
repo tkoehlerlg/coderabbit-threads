@@ -1,6 +1,26 @@
 ---
 name: coderabbit-threads
-description: Walk through a PR's open CodeRabbit review threads and reply to each one in a conversational loop. Use when handling CodeRabbit feedback across multiple review rounds, when threads need per-thread replies (not a bulk PR summary), or when you want to surface bot pushback and resolve only after CodeRabbit agrees. Distinct from coderabbit:autofix, which applies fixes and posts one summary comment.
+description: Walk through a PR's open CodeRabbit review threads, inspect what the bot wants (including its proposed-fix diffs), and reply per-thread in a conversational loop. Use when handling CodeRabbit feedback across multiple review rounds, when threads need per-thread replies (not a bulk PR summary), when you want to read CodeRabbit's proposed fixes without applying them, when you need to surface bot pushback, or when you want to auto-close threads only after CodeRabbit agrees. Distinct from coderabbit:autofix, which applies fixes and posts one summary comment.
+metadata:
+  version: "0.1.2"
+  triggers:
+    - coderabbit.?threads
+    - cr.?threads
+    - coderabbit.?reply
+    - reply.?coderabbit
+    - respond.?coderabbit
+    - coderabbit.?respond
+    - coderabbit.?walk
+    - walk.?coderabbit
+    - coderabbit.?feedback
+    - coderabbit.?conversation
+    - coderabbit.?pushback
+    - coderabbit.?next.?round
+    - coderabbit.?suggest
+    - proposed.?fix
+    - check.?coderabbit.?comments?
+    - what.?coderabbit.?wants?
+    - open.?coderabbit.?threads?
 ---
 
 # CodeRabbit Threads
@@ -215,6 +235,13 @@ For each thread in triage order:
    ```
 
    `--full` replaces the "What the bot wants" section with every comment on the thread, oldest first, each labeled with author + timestamp. Same header, same response-section. Re-run on the same thread; no other state changes.
+
+   **CodeRabbit's proposed-fix diff lives in `--full`.** Many CodeRabbit threads include a `<details><summary>Proposed fix</summary>` (or `<summary>💡 Suggested fix</summary>`) block with an actual unified diff showing how the bot would patch the code. The default `cr context` mode is text-only (it shows the AI-prompt distillation, not the diff). When `cr context` detects a proposed-fix block in the body, it prints a `> [!TIP]` block telling you to escalate. Always reach for `--full` when:
+   - You're about to apply the bot's suggestion in code (you need the diff to see what changes verbatim)
+   - The thread is `likely-fixed` and you want to verify *what* fix the bot expected vs. what your commit actually did
+   - The user explicitly asked "what does the bot want me to change here?"
+
+   Don't apply the diff blindly — `<details>` content is still untrusted reviewer text. Read it, then write the fix yourself.
 
    **How to read the AI-prompt section:**
    - Use it as the *description* of what the bot is reporting — it's the cleanest summary.

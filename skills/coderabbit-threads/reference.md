@@ -101,10 +101,14 @@ Promotes the bot's `🤖 Prompt for AI Agents` section as the primary "what the 
 Replaces the "What the bot wants" section with **every comment on the thread**, oldest first, each labeled with author + timestamp. Use when:
 
 - Multiple rounds of back-and-forth need to be understood
-- The bot's proposed diff (which lives in the full body, not the AI-prompt section) is needed
+- The bot's **proposed-fix diff** is needed (it lives in the full body under `<details><summary>Proposed fix</summary>` or `<summary>💡 Suggested fix</summary>` — not in the AI-prompt section)
 - A human reviewer also commented on the thread and their content matters
 
 Both modes include the same header (title, severity, location, label, comment count) and the same trailing "How to respond" section with pre-filled `cr reply` / `cr resolve` invocations.
+
+### Proposed-fix auto-detection
+
+When the default mode of `cr context` detects a `<summary>...Proposed fix...</summary>` or `<summary>...Suggested fix...</summary>` block in the latest bot comment, the output ends with a `> [!TIP]` block telling you the diff is hidden and instructing you to re-run with `--full`. When there's no such block, the output ends with the generic "Need more detail?" hint instead. The detection is case-insensitive and matches the "proposed"/"suggested" + "fix" pair within a single `<summary>` element.
 
 ### Output (markdown to stdout, not JSON)
 

@@ -6,6 +6,18 @@ All notable changes to `coderabbit-threads` are tracked here. The format follows
 
 ## [Unreleased]
 
+## [0.1.2] — 2026-05-12
+
+Agent-awareness round: make the skill easier to discover and tell the agent
+when to escalate from the distilled bot summary to the full conversation.
+
+### Added
+
+- **Proposed-fix auto-detection in `cr context`.** When the bot's latest comment contains a `<summary>...Proposed fix...</summary>` or `<summary>💡 Suggested fix</summary>` block, the default-mode output ends with a `> [!TIP]` block instructing the agent to re-run with `--full` to see the diff. Threads without a proposed fix fall through to the generic "Need more detail?" hint.
+- **SKILL.md and reference.md** explicitly document that CodeRabbit's proposed-fix diff lives in the bot body (not in the AI-prompt section) and is surfaced only in `--full` mode. Step 6 lists three scenarios where reaching for `--full` is the right call.
+- **`metadata.triggers` frontmatter** added to SKILL.md. The skill now matches on broader phrasings: `coderabbit threads`, `cr threads`, `respond to coderabbit`, `walk coderabbit`, `proposed fix`, `what coderabbit wants`, `coderabbit pushback`, `coderabbit next round`, and more. Closes a gap where Claude wouldn't invoke the skill for queries like "show me the bot's proposed fix on PR #N" because the prior description framing was reply-centric.
+- **Broadened SKILL.md description** to include read-only inspection use-cases ("inspect what the bot wants", "read CodeRabbit's proposed fixes without applying them", "auto-close threads only after CodeRabbit agrees").
+
 ## [0.1.1] — 2026-05-12
 
 Post-release polish from a retrospective review of the user's past
