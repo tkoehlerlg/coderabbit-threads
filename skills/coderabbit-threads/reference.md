@@ -74,6 +74,8 @@ Bad input — a string that matches none of the three forms, or a SHA that isn't
     "last_bot_comment_id": 12345,
     "last_bot_comment_at": "2026-05-12T14:32:00Z",
     "last_human_comment_at": "2026-05-12T14:40:00Z",
+    "last_author_reply_at": "2026-05-12T14:40:00Z",
+    "last_teammate_reply_at": null,
     "label": "bot-pushback"
   }
 ]
@@ -81,15 +83,30 @@ Bad input — a string that matches none of the three forms, or a SHA that isn't
 
 ### Computed `label` values
 
-`resolved` takes precedence over all other labels. The remaining four are conversation-state labels and only apply to **unresolved** threads.
+`resolved` takes precedence over all other labels. The remaining four are **conversation-state** labels that describe what happens next in the bot conversation, independent of who's running the skill. They only apply to **unresolved** threads.
 
 | Label | Precondition | Condition |
 |-------|--------------|-----------|
 | `resolved` | (always wins when `is_resolved == true`) | `is_resolved == true` |
-| `bot-pushback` | `is_resolved == false` | Bot's last comment is strictly after the human's last comment |
-| `awaiting-bot` | `is_resolved == false` | Human's last comment is strictly after the bot's, no bot reply yet |
+| `bot-pushback` | `is_resolved == false` | Bot's last comment is strictly after the most recent human comment |
+| `awaiting-bot` | `is_resolved == false` | Any human's last comment is strictly after the bot's |
 | `untouched` | `is_resolved == false` | Only bot comments, no human reply yet |
 | `outdated-unresolved` | `is_resolved == false` | `is_outdated == true` (bot likely considered the code fixed but the thread wasn't closed) |
+
+**Two axes, not one.** v0.3.2 split the previous "any human" model into two orthogonal axes:
+
+- **Conversation state** (above, in the label) — what does CodeRabbit do next? It doesn't care who replied; it responds to any human comment. So the label stays in the `bot / any-human / nobody` taxonomy.
+- **Participation** (below, in dedicated fields) — *who* is in the conversation. The PR author, a teammate, the running user. The agent uses these to figure out whose turn it actually is from their perspective.
+
+The participation fields are:
+
+| Field | Meaning |
+|-------|---------|
+| `last_author_reply_at` | When the PR author last commented (null if they haven't) |
+| `last_teammate_reply_at` | When a non-author human last commented (null if none) |
+| `last_running_user_reply_at` | When the *running user* (whoever invoked the skill) last commented (null if they haven't) |
+
+Combine with the top-level `pr_author` and `running_user` from `cr status` and the agent has everything needed to answer "is this thread mine to handle, the author's, or a teammate's?" without re-deriving from `comments[].author`.
 
 **Why `resolved` wins:** A resolved thread is closed deliberately — by the bot or a human. Bot-after-human timestamp ordering on a resolved thread is just the final state, not pushback waiting for a reply. The filter `--filter pushback` excludes resolved threads belt-and-suspenders, even if a future label-logic change would have included them.
 

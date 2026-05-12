@@ -6,6 +6,24 @@ All notable changes to `coderabbit-threads` are tracked here. The format follows
 
 ## [Unreleased]
 
+## [0.3.2] — 2026-05-12
+
+Participation awareness — the agent now knows who's in each conversation, including itself.
+
+### Added
+
+- **`running_user` field on `cr status`.** Resolves the gh-authenticated user's login via `gh api user --jq .login` (cached per `cr` invocation). Combined with the existing `pr_author`, the agent can tell whether it's running as the PR author or as a teammate.
+- **`last_author_reply_at` / `last_teammate_reply_at` / `last_running_user_reply_at` fields on each thread.** Three orthogonal timestamps splitting "last human reply" into who the human was. `null` when that bucket is empty.
+
+### Changed
+
+- **`cr threads` GraphQL now fetches `pullRequest.author.login`** and stamps it (plus the running user) onto every thread node so `normalize_threads` can compute the participation fields without an extra API call per thread.
+- **Label vocabulary unchanged** — `bot-pushback`, `awaiting-bot`, `untouched`, `outdated-unresolved`, `resolved`. The participation split deliberately lives in fields, not labels. CodeRabbit responds the same way regardless of which human replied, so the conversation-state label shouldn't fork on author vs. teammate.
+
+### Why this shape
+
+Earlier drafts proposed a perspective-aware label (`awaiting-author` when a teammate replied last) but that conflated two orthogonal axes — *whose turn is next in the bot conversation* (label) and *who's actually in the thread* (participation). The label stays minimal and objective; the agent uses the new fields plus `pr_author` and `running_user` to derive perspective itself.
+
 ## [0.3.1] — 2026-05-12
 
 Docs-only polish — no behaviour, output, or interface changes.

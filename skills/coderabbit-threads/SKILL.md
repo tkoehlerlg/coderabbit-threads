@@ -2,7 +2,7 @@
 name: coderabbit-threads
 description: Go through a PR's open CodeRabbit review threads, inspect what CodeRabbit wants (including its proposed-fix diffs), and reply per-thread in a conversational loop. Use when handling CodeRabbit feedback across multiple review rounds, when threads need per-thread replies (not a bulk PR summary), when you want to read CodeRabbit's proposed fixes without applying them, when you need to surface CodeRabbit pushback, or when you want to auto-close threads only after CodeRabbit agrees. Distinct from coderabbit:autofix, which applies fixes and posts one summary comment.
 metadata:
-  version: "0.3.1"
+  version: "0.3.2"
   triggers:
     - coderabbit.?threads
     - cr.?threads
@@ -214,11 +214,30 @@ cr threads "$pr_url" --filter open --since 2026-05-12T10:00:00Z
 
 | `cr.label` | Meaning |
 |------------|---------|
-| `bot-pushback` | **Open** thread; CodeRabbit's last comment is strictly after the human's last comment. Conversation in progress. |
-| `awaiting-bot` | Open thread; human's last comment is after CodeRabbit's. CodeRabbit hasn't responded yet. (Identifier kept as `awaiting-bot` because that's the literal value `cr` emits.) |
+| `bot-pushback` | **Open** thread; CodeRabbit's last comment is strictly after the most recent human comment. Bot is responding to or rejecting a reply. |
+| `awaiting-bot` | Open thread; any human's last comment is strictly after the bot's. CodeRabbit hasn't responded yet. |
 | `untouched` | Open thread; only CodeRabbit comments, no human reply. |
 | `outdated-unresolved` | CodeRabbit considered the cited code possibly-fixed but the thread is still unresolved. Possibly a missed thread. |
 | `resolved` | **Closed.** Someone (CodeRabbit or human) marked the thread resolved. Historical record — NOT actionable. |
+
+The label describes the **conversation state** with the bot (whose turn is next). It does **not** encode whose turn it is from the running user's perspective. For that, use the participation fields below.
+
+#### Participation fields — who's in the conversation
+
+`cr status` returns `pr_author` (the PR's owner) and `running_user` (the gh-authenticated user the agent is running as). Each thread additionally carries three `last_*_reply_at` timestamps:
+
+| Field | Meaning |
+|-------|---------|
+| `last_author_reply_at` | When the PR author last commented on this thread. `null` if they haven't. |
+| `last_teammate_reply_at` | When a non-author human last commented. `null` if none. |
+| `last_running_user_reply_at` | When the running user last commented. `null` if they haven't. |
+
+**How to use these.** The label tells you whether CodeRabbit is the next expected speaker. The fields tell you whether the thread is **yours to handle, the author's, or a teammate's**:
+
+- `running_user == pr_author`. You are the author. `last_author_reply_at` is your reply timestamp. `last_teammate_reply_at` is "another human chimed in" (you may acknowledge or wait). `awaiting-bot` always means "I (the author) replied last".
+- `running_user != pr_author` (teammate). The author is a third party from your perspective. `last_running_user_reply_at` is your reply timestamp. `last_author_reply_at` is "the author chimed in" — if it's the most recent, this is probably the author's thread, not yours.
+
+Use `last_running_user_reply_at` as the canonical answer to "did *I* engage on this thread?". Combine with `pr_author` vs. `running_user` to decide whether to act, defer, or skip.
 
 **Important — resolved threads are not pushback even if CodeRabbit's last comment is after the human's.** Resolution means the conversation was explicitly closed; bot-after-human ordering on a resolved thread is just the final state of a finished exchange, not a request for more action. Skip them this run unless the user explicitly asks you to revisit history.
 

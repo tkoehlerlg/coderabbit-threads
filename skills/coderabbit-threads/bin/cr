@@ -25,6 +25,18 @@ die() { echo "cr: $*" >&2; exit 1; }
 not_found_die() { echo "cr: $*" >&2; exit 1; }
 api_die() { echo "cr: $*" >&2; exit 2; }
 
+# Resolve the gh-authenticated user's login. Cached for the process.
+# Empty string if gh is unauthenticated or the call fails — callers degrade gracefully.
+RUNNING_USER_CACHE=""
+RUNNING_USER_RESOLVED=0
+gh_running_user() {
+  if [ "$RUNNING_USER_RESOLVED" -eq 0 ]; then
+    RUNNING_USER_CACHE=$(gh api user --jq .login 2>/dev/null || echo "")
+    RUNNING_USER_RESOLVED=1
+  fi
+  printf '%s' "$RUNNING_USER_CACHE"
+}
+
 # Returns 0 if response indicates "PR not found" (data.repository.pullRequest is null OR errors contain NOT_FOUND/Could not resolve).
 response_is_pr_not_found() {
   local resp="$1"
@@ -56,7 +68,7 @@ parse_pr_url() {
 # >100 comments are an edge case and the most recent activity is preserved).
 # The agent is never expected to paginate — `cr` owns all pagination.
 fetch_review_threads_raw() {
-  local cursor="" all="[]" response has_next rc
+  local cursor="" all="[]" response has_next rc pr_author=""
   while :; do
     set +e
     if [ -n "$cursor" ]; then
@@ -66,6 +78,7 @@ fetch_review_threads_raw() {
           repository(owner:$owner,name:$repo){
             pullRequest(number:$pr){
               title
+              author{login}
               reviewThreads(first:100,after:$cursor){
                 pageInfo{hasNextPage endCursor}
                 nodes{
@@ -90,6 +103,7 @@ fetch_review_threads_raw() {
           repository(owner:$owner,name:$repo){
             pullRequest(number:$pr){
               title
+              author{login}
               reviewThreads(first:100){
                 pageInfo{hasNextPage endCursor}
                 nodes{
@@ -116,11 +130,26 @@ fetch_review_threads_raw() {
     fi
     [ $rc -ne 0 ] && api_die "GraphQL fetch failed (gh exit $rc)"
 
+    # Stash pr_author from the first page (it's the same on every page).
+    if [ -z "$pr_author" ]; then
+      pr_author=$(jq -r '.data.repository.pullRequest.author.login // ""' <<<"$response")
+    fi
+
     all=$(jq -c --argjson r "$response" '. + ($r.data.repository.pullRequest.reviewThreads.nodes // [])' <<<"$all")
     has_next=$(jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage' <<<"$response")
     cursor=$(jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.endCursor // ""' <<<"$response")
     [ "$has_next" = "true" ] || break
   done
+
+  # Stamp pr_author + running_user onto every thread node so normalize_threads
+  # can compute per-thread participation fields (last_author_reply_at /
+  # last_teammate_reply_at / last_running_user_reply_at). Empty strings when
+  # gh is unauthenticated or the PR has no resolvable author — normalize_threads
+  # then degrades gracefully (fields become null).
+  local running_user
+  running_user=$(gh_running_user)
+  all=$(jq -c --arg pa "$pr_author" --arg ru "$running_user" \
+    'map(. + {_pr_author: $pa, _running_user: $ru})' <<<"$all")
   printf '%s' "$all"
 }
 
@@ -152,20 +181,33 @@ normalize_threads() {
 
     map(
       . as $t
+      | ($t._pr_author    // "") as $pr_author
+      | ($t._running_user // "") as $running_user
       | ($t.comments.nodes // []) as $cs
       | ($cs | map(select(is_bot(.author.login)))) as $bot_cs
       | ($cs | map(select(is_bot(.author.login) | not))) as $human_cs
+      # Participation splits (informational fields, not used by the label).
+      # When pr_author / running_user are empty (gh unauth, deleted user),
+      # the matching bucket stays empty and the field becomes null.
+      | ($human_cs | map(select($pr_author    != "" and .author.login == $pr_author)))    as $author_cs
+      | ($human_cs | map(select($pr_author    == "" or  .author.login != $pr_author)))    as $teammate_cs
+      | ($human_cs | map(select($running_user != "" and .author.login == $running_user))) as $user_cs
       | (if ($bot_cs | length) > 0 then $bot_cs[0] else null end) as $root
       | (if $root then parse_header($root.body) else {type:null,sev:null} end) as $hdr
-      | (if $bot_cs | length > 0 then ($bot_cs | last) else null end) as $last_bot
-      | (if $human_cs | length > 0 then ($human_cs | last) else null end) as $last_human
+      | (if ($bot_cs      | length) > 0 then ($bot_cs      | last) else null end) as $last_bot
+      | (if ($human_cs    | length) > 0 then ($human_cs    | last) else null end) as $last_human
+      | (if ($author_cs   | length) > 0 then ($author_cs   | last) else null end) as $last_author
+      | (if ($teammate_cs | length) > 0 then ($teammate_cs | last) else null end) as $last_teammate
+      | (if ($user_cs     | length) > 0 then ($user_cs     | last) else null end) as $last_user
+      # Conversation-state label (v0.3 model): about *what happens next in the
+      # bot conversation*. The author/teammate distinction lives in fields,
+      # not labels, because CodeRabbit responds the same way regardless.
       | (if $last_bot and $last_human then
           (if $last_bot.createdAt > $last_human.createdAt then "bot-pushback"
-           elif $last_human.createdAt > $last_bot.createdAt then "awaiting-bot"
            else "awaiting-bot" end)
-         elif $last_bot and ($last_human|not) then "untouched"
-         elif (.isOutdated == true) and (.isResolved == false) then "outdated-unresolved"
-         else "untouched" end) as $conv_label
+         elif $last_bot and ($last_human | not) then "untouched"
+         else "untouched"
+         end) as $conv_label
       | (if (.isOutdated == true) and (.isResolved == false) and $conv_label == "untouched"
          then "outdated-unresolved" else $conv_label end) as $non_resolved_label
       | (if .isResolved then "resolved" else $non_resolved_label end) as $label
@@ -185,9 +227,12 @@ normalize_threads() {
           comments: ($cs | map({id: .databaseId, author: .author.login, body: .body, created_at: .createdAt})),
           created_at: ($root.createdAt // null),
           has_proposed_fix: ($bot_cs | map(has_proposed_fix(.body)) | any),
-          last_bot_comment_id: ($last_bot.databaseId // null),
-          last_bot_comment_at: ($last_bot.createdAt // null),
-          last_human_comment_at: ($last_human.createdAt // null),
+          last_bot_comment_id:      ($last_bot.databaseId // null),
+          last_bot_comment_at:      ($last_bot.createdAt  // null),
+          last_human_comment_at:    ($last_human.createdAt // null),
+          last_author_reply_at:     ($last_author.createdAt   // null),
+          last_teammate_reply_at:   ($last_teammate.createdAt // null),
+          last_running_user_reply_at: ($last_user.createdAt   // null),
           label: $label
         }
     )
@@ -355,12 +400,13 @@ cmd_status() {
   fi
   [ $rc -ne 0 ] && api_die "status query failed (gh exit $rc)"
 
-  local pr_state pr_is_draft pr_merged pr_closed pr_author human_count
+  local pr_state pr_is_draft pr_merged pr_closed pr_author running_user human_count
   pr_state=$(jq -r '.data.repository.pullRequest.state' <<<"$response")
   pr_is_draft=$(jq -r '.data.repository.pullRequest.isDraft' <<<"$response")
   pr_merged=$(jq -r '.data.repository.pullRequest.merged' <<<"$response")
   pr_closed=$(jq -r '.data.repository.pullRequest.closed' <<<"$response")
   pr_author=$(jq -r '.data.repository.pullRequest.author.login // ""' <<<"$response")
+  running_user=$(gh_running_user)
 
   # Count OPEN review threads whose root comment is NOT authored by CodeRabbit.
   # The skill ignores these but surfaces the count so users know they exist.
@@ -482,7 +528,7 @@ cmd_status() {
       --argjson merged "$pr_merged" --argjson closed "$pr_closed" \
       --argjson ip "$in_progress" --arg la "$last_active" \
       --arg mode "$mode" --arg reason "$paused_reason" \
-      --arg author "$pr_author" --argjson hc "$human_count" \
+      --arg author "$pr_author" --arg user "$running_user" --argjson hc "$human_count" \
       '{
         state: $state,
         is_draft: $is_draft,
@@ -494,6 +540,7 @@ cmd_status() {
         mode: $mode,
         paused_reason: (if $reason == "" then null else $reason end),
         pr_author: (if $author == "" then null else $author end),
+        running_user: (if $user == "" then null else $user end),
         human_open_thread_count: $hc
       }'
   else
@@ -502,7 +549,7 @@ cmd_status() {
       --argjson merged "$pr_merged" --argjson closed "$pr_closed" \
       --argjson ip "$in_progress" --arg la "$last_active" --argjson m "$mins" \
       --arg mode "$mode" --arg reason "$paused_reason" \
-      --arg author "$pr_author" --argjson hc "$human_count" \
+      --arg author "$pr_author" --arg user "$running_user" --argjson hc "$human_count" \
       '{
         state: $state,
         is_draft: $is_draft,
@@ -514,6 +561,7 @@ cmd_status() {
         mode: $mode,
         paused_reason: (if $reason == "" then null else $reason end),
         pr_author: (if $author == "" then null else $author end),
+        running_user: (if $user == "" then null else $user end),
         human_open_thread_count: $hc
       }'
   fi
