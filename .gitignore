@@ -5,3 +5,7 @@
 .vscode/
 .idea/
 node_modules/
+
+# Transient retrospective artifacts — never commit
+PAST_SESSION_REVIEW.md
+LICENSE_REVIEW.md
