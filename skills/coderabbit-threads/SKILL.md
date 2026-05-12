@@ -2,7 +2,7 @@
 name: coderabbit-threads
 description: Walk through a PR's open CodeRabbit review threads, inspect what the bot wants (including its proposed-fix diffs), and reply per-thread in a conversational loop. Use when handling CodeRabbit feedback across multiple review rounds, when threads need per-thread replies (not a bulk PR summary), when you want to read CodeRabbit's proposed fixes without applying them, when you need to surface bot pushback, or when you want to auto-close threads only after CodeRabbit agrees. Distinct from coderabbit:autofix, which applies fixes and posts one summary comment.
 metadata:
-  version: "0.1.7"
+  version: "0.1.8"
   triggers:
     - coderabbit.?threads
     - cr.?threads
@@ -180,9 +180,31 @@ For threads where `cr.label == bot-pushback`, do NOT re-triage — they're a dif
 
 Show a compact table:
 
-```
-Open CodeRabbit threads on PR #<n>: <title>
+**Always show the overview first.** Before any work, show the user (a) a categorized summary with intended action per category and (b) the full detail table. Only then ask whether to proceed. If the user previously said "skip the overview from now on" in this run, omit the detail table but still show the categorized summary — never start work blind.
 
+#### (a) Categorized summary — what will happen and what won't
+
+After triage in Step 4, group the threads by triage label and show one line per non-empty group with the agent's intended action:
+
+```
+PR #<n>: <title>
+<N> open CodeRabbit threads:
+
+  ✅ Already fixed (likely-fixed):    3   → autonomous "Fixed in <sha>" reply
+  📌 Out-of-scope of this PR:         1   → autonomous "Out-of-scope" reply
+  ⚠️  Still applies (needs decision):  2   → will ask you per thread
+  ❓ Unclear (couldn't triage):        1   → will ask you per thread
+  💬 Bot pushed back on you:           1   → will ask you per thread
+
+Skipped from this walk-through (already-closed, surfaced for reference only):
+  📜 Resolved threads:                 4   → not shown unless you ask
+```
+
+The categorized summary makes the agent's plan explicit *before* anything happens: which threads will get autonomous replies, which will pause for you, which were excluded as resolved. Counts of 0 are omitted to keep the block tight.
+
+#### (b) Detail table
+
+```
 | # | Triage          | Severity | Location               | One-liner                  |
 |---|-----------------|----------|------------------------|----------------------------|
 | 1 | bot-pushback    | 🟠 HIGH  | apps/api/foo.ts:42     | Async call missing await   |
@@ -192,7 +214,9 @@ Open CodeRabbit threads on PR #<n>: <title>
 
 Severity icons: 🔴 critical/high → CRIT, 🟠 medium → HIGH, 🟡 minor/low → MEDIUM/LOW, 🟢 info → INFO.
 
-Ask the user (via `AskUserQuestion` on Claude Code; numbered list on other platforms):
+#### (c) Ask the user to proceed
+
+Only after (a) and (b) are on screen, ask (via `AskUserQuestion` on Claude Code; numbered list on other platforms):
 
 - 🚶 Walk through threads
 - ⏭️ Skip all

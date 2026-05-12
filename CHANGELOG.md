@@ -6,6 +6,16 @@ All notable changes to `coderabbit-threads` are tracked here. The format follows
 
 ## [Unreleased]
 
+## [0.1.8] — 2026-05-12
+
+### Changed
+
+- **Step 5 now shows the user a categorized overview before any work starts.** The agent groups the open threads by triage label and shows one line per non-empty category — counts plus the intended action for each ("autonomous reply" vs "will ask you per thread") — followed by the detailed table, *then* asks the walk-through gate. This makes the agent's plan visible upfront: which threads will get autonomous replies, which will pause for the user, which were excluded as resolved.
+- **Resolved threads are surfaced (count only) in the overview**, even though they're skipped from the walk. Newcomers learn they exist without having to opt into `--filter all`.
+- The default is **always show the overview first**; only suppress it if the user has explicitly asked to skip in this run.
+
+This is a "no surprises" change: the user sees what *would* happen before it does, rather than after.
+
 ## [0.1.7] — 2026-05-12
 
 Five fixes from a wording / accessibility pass on the README.

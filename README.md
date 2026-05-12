@@ -11,7 +11,12 @@ This is the **multi-round conversational counterpart** to the official [`coderab
 ```text
 PR #142 · ready · last bot activity 9m ago
 
-Open CodeRabbit threads:
+4 open CodeRabbit threads:
+
+  ✅ Already fixed (likely-fixed):    1   → autonomous "Fixed in <sha>" reply
+  📌 Out-of-scope of this PR:         1   → autonomous "Out-of-scope" reply
+  ⚠️  Still applies (needs decision):  1   → will ask you per thread
+  💬 Bot pushed back on you:           1   → will ask you per thread
 
 | # | Triage        | Severity | Location                       | One-liner                       |
 |---|---------------|----------|--------------------------------|---------------------------------|
