@@ -6,6 +6,20 @@ All notable changes to `coderabbit-threads` are tracked here. The format follows
 
 ## [Unreleased]
 
+## [0.1.11] — 2026-05-12
+
+Wording pass.
+
+### Changed
+
+- **README intro to "What a run looks like"** now starts with the agent as the subject and is more direct: *"Your agent goes through every open CodeRabbit thread, replies per-thread, and tracks CodeRabbit's reaction — autonomous when the call is clear, pauses for you when it isn't."* (Previously: a passive sentence about "what the skill does".)
+- **Categorized summary** restyled CodeRabbit-style: each line carries a short observation per category ending with an ellipsis (`already addressed in a follow-up commit …`, `concern still valid in the cited code …`, `CodeRabbit replied to your last reply …`) plus the agent's intended action. Reads like a CodeRabbit summary block, not a static label table.
+- **"walk" / "walk through" replaced with "go through"** (or "handled" in summary lines) everywhere in prose. The slash command, label names, and existing trigger regexes (`coderabbit.?walk`, `walk.?coderabbit`) stay as-is for backwards-compat — also added new trigger regexes (`go.?through.?coderabbit`, `coderabbit.?go.?through`, `handle.?coderabbit`, `coderabbit.?handle`).
+
+### Fixed
+
+- **`awaiting-CodeRabbit` regression in SKILL.md** (introduced by the v0.1.10 sweep) reverted to `awaiting-bot` — that's the literal identifier `cr` emits in its JSON output. Renaming the prose without the script is a contract break; identifier stays, prose around it talks about "CodeRabbit".
+
 ## [0.1.10] — 2026-05-12
 
 Naming clarity pass. "bot" was ambiguous — could mean CodeRabbit *or* the user's agent (Claude). Resolved by always naming the actor.

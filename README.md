@@ -1,6 +1,6 @@
 # coderabbit-threads
 
-A Claude Code skill for walking through a pull request's open [CodeRabbit](https://coderabbit.ai) review threads and replying to each one in a conversational loop. Triage each thread, post a per-thread reply (not a bulk PR comment), wait for CodeRabbit's reaction, and only resolve once CodeRabbit agrees.
+A Claude Code skill for going through a pull request's open [CodeRabbit](https://coderabbit.ai) review threads and replying to each one in a conversational loop. Triage each thread, post a per-thread reply (not a bulk PR comment), wait for CodeRabbit's reaction, and only resolve once CodeRabbit agrees.
 
 This is the **multi-round conversational counterpart** to the official [`coderabbit:autofix`](https://github.com/coderabbitai/skills) skill. `autofix` applies CodeRabbit's proposed diffs and posts one summary comment. `coderabbit-threads` is what you reach for when you want to acknowledge, push back on, or explicitly defer suggestions thread-by-thread — and have CodeRabbit react.
 
@@ -8,17 +8,17 @@ This is the **multi-round conversational counterpart** to the official [`coderab
 
 ## What a run looks like
 
-This is what the skill does on a PR with four open threads — two get autonomous replies from your agent, two pause for your call, and CodeRabbit's reactions are checked in the background.
+Your agent goes through every open CodeRabbit thread, replies per-thread, and tracks CodeRabbit's reaction — autonomous when the call is clear, pauses for you when it isn't.
 
 ```text
 PR #142 · ready · last CodeRabbit activity 9m ago
 
-4 open CodeRabbit threads:
+4 open CodeRabbit threads on PR #142 …
 
-  ✅ Already fixed (likely-fixed):      1   → autonomous "Fixed in <sha>" reply
-  📌 Out-of-scope of this PR:           1   → autonomous "Out-of-scope" reply
-  ⚠️  Still applies (needs decision):    1   → will ask you per thread
-  💬 CodeRabbit pushed back on you:     1   → will ask you per thread
+  ✅  likely-fixed   1   already addressed in a follow-up commit …   auto-reply "Fixed in <sha>"
+  📌  out-of-scope   1   touches another package …                   auto-reply "Out-of-scope"
+  ⚠️   still-applies  1   concern still valid in the cited code …     asking you …
+  💬  bot-pushback   1   CodeRabbit replied to your last reply …     asking you …
 
 | # | Triage        | Severity | Location                       | One-liner                       |
 |---|---------------|----------|--------------------------------|---------------------------------|
@@ -27,8 +27,8 @@ PR #142 · ready · last CodeRabbit activity 9m ago
 | 3 | likely-fixed  | 🟡 LOW   | apps/app/src/ui.tsx:88         | Use semantic button             |
 | 4 | out-of-scope  | 🟡 LOW   | packages/db/src/migrate.ts:14  | Drop legacy column              |
 
-🚶 Walk through threads?  ⏭ Skip all   ❌ Cancel
-> walk
+🚶 Go through threads?  ⏭ Skip all   ❌ Cancel
+> go
 
 May I auto-resolve threads when CodeRabbit agrees?
   ✅ Yes, auto-close   🙋 Ask me each time   ❌ Never auto-close
@@ -66,7 +66,7 @@ Polling for CodeRabbit reactions (up to 5 min):
   ⏳ PRT_c — no reaction yet
   🔁 PRT_d — CodeRabbit pushed back, will surface on next run
 
-Walked 4 threads. Posted 4 replies (2 autonomous, 2 user-chosen).
+Handled 4 threads. Posted 4 replies (2 autonomous, 2 user-chosen).
 2 closed on CodeRabbit agreement; 2 still open.
 ```
 
@@ -105,7 +105,7 @@ The skill follows an 8-step workflow. The full runbook is in [`skills/coderabbit
 | 2 | Resolve PR        | Find the current branch's PR, or offer to create one                 |
 | 3 | Check CodeRabbit status  | Bail if PR is merged, closed, draft, or CodeRabbit is still working  |
 | 4 | Triage threads    | Label each open thread: `bot-pushback`, `still-applies`, `likely-fixed`, `unclear`, `out-of-scope` |
-| 5 | Confirm + policy  | Show compact table; ask walk-through?; ask self-close policy (auto / ask / never) |
+| 5 | Confirm + policy  | Show compact table; ask to proceed?; ask self-close policy (auto / ask / never) |
 | 6 | Per-thread loop   | Autonomous for `likely-fixed` and `out-of-scope`; ask user for `still-applies` / `unclear` / `bot-pushback` |
 | 7 | Poll for reaction | Check whether CodeRabbit agreed with each reply; apply self-close policy on agreement |
 | 8 | Summary           | Terminal-only summary. **No PR-level comment is ever posted.**        |
@@ -124,7 +124,7 @@ All GitHub API interaction goes through the bundled `cr` CLI — the skill never
 /reload-plugins
 ```
 
-The repo ships a single-plugin `.claude-plugin/marketplace.json` so the `/plugin marketplace add` slash command points at this repo directly. After install, Claude Code will discover the skill the next time you ask it to walk through a PR's CodeRabbit threads.
+The repo ships a single-plugin `.claude-plugin/marketplace.json` so the `/plugin marketplace add` slash command points at this repo directly. After install, Claude Code will discover the skill the next time you ask it to handle a PR's CodeRabbit threads.
 
 The `coderabbit-threads@coderabbit-threads` ID isn't a typo — Claude Code plugin IDs are `<plugin-name>@<marketplace-name>`, and this is a single-plugin marketplace where both names happen to be the same.
 
@@ -155,7 +155,7 @@ Then in a Claude Code session:
 
 `coderabbit-threads` should appear in the list. Invoke it by asking, for example:
 
-> Walk through the open CodeRabbit threads on this PR.
+> Go through the open CodeRabbit threads on this PR.
 
 Or use the bundled slash command:
 
@@ -257,7 +257,7 @@ Known gaps and intentional v1 scoping:
 
 - **Other agent runtimes (Cursor, Codex, Copilot CLI).** The `SKILL.md` is platform-aware (`AskUserQuestion` and `ScheduleWakeup` are documented as Claude Code primitives with fallback notes), but the runtimes' own plugin formats aren't published yet. Manual install + invoking `cr` directly works on any platform with `gh` + `jq`.
 - **v0.2 — fix-then-reply for `still-applies`.** Today, when you pick `will-fix` on a still-applies thread, you write and commit the fix yourself, then re-run the skill so the next pass labels it `likely-fixed`. v0.2 will integrate the fix step: optionally delegate to `coderabbit:autofix`, or apply CodeRabbit's proposed diff directly, then commit and post `Fixed in <sha>` in one motion.
-- **v0.2 — skip threads you already handled** in earlier review rounds (`cr threads --since <ref>`). Real PRs hit 3–5 review rounds; after fixing things and pushing, CodeRabbit re-reviews and adds *new* threads on top of the old ones. The `--since` filter will surface only threads created after a given commit or timestamp, so you walk through the new feedback without re-visiting threads you've already replied to.
+- **v0.2 — skip threads you already handled** in earlier review rounds (`cr threads --since <ref>`). Real PRs hit 3–5 review rounds; after fixing things and pushing, CodeRabbit re-reviews and adds *new* threads on top of the old ones. The `--since` filter will surface only threads created after a given commit or timestamp, so you go through the new feedback without re-visiting threads you've already replied to.
 - **Polling backoff.** Step 7 polls at a fixed 60s interval up to 5 min. Adaptive backoff (start fast, slow down) is a future improvement.
 - **No auto-created issues.** When the user marks a thread `out-of-scope`, the reply notes it but no Linear/Jira/GitHub issue is created. Users do that themselves; the skill stays narrow.
 
