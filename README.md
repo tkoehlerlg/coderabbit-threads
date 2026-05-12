@@ -47,9 +47,6 @@ the next pass labels this thread `likely-fixed` and posts `Fixed in <sha>`
 autonomously. v0.2 will integrate find/fix/commit/reply in one step;
 see Roadmap.)
 
-Use "acknowledged" for the remaining 0 still-applies threads in this run?
-> n/a
-
 — Thread 3/4 · likely-fixed · apps/app/src/ui.tsx:88 ——————————
 Posted (auto): "Fixed in 4af1c9d by switching <Button> to semantic markup."
 
@@ -120,6 +117,8 @@ All GitHub API interaction goes through the bundled `cr` CLI — the skill never
 ```
 
 The repo ships a single-plugin `.claude-plugin/marketplace.json` so the `/plugin marketplace add` slash command points at this repo directly. After install, Claude Code will discover the skill the next time you ask it to walk through a PR's CodeRabbit threads.
+
+The `coderabbit-threads@coderabbit-threads` ID isn't a typo — Claude Code plugin IDs are `<plugin-name>@<marketplace-name>`, and this is a single-plugin marketplace where both names happen to be the same.
 
 ### Manual install
 
@@ -236,7 +235,7 @@ Both skills target CodeRabbit, and they compose — but the responsibilities are
 | What it does        | Applies CodeRabbit's proposed code diffs      | Replies to threads conversationally            |
 | Where comments land | One summary comment at the PR level           | One reply per thread, inline                   |
 | Rounds              | Single-shot                                   | Multi-round; surfaces bot pushback             |
-| User approval       | Per-diff approve / reject                     | Per-thread approve / reject reply body         |
+| User approval       | Per-diff approve / reject                     | Autonomous for `likely-fixed` / `out-of-scope`; user-prompted for `still-applies` / `unclear` / `bot-pushback`; one upfront consent for auto-close |
 | Resolution          | Bot resolves on agreement (via PR comment)    | Bot resolves on agreement (via thread reply)   |
 | Best for            | "Apply the suggestions I agree with"          | "Acknowledge / defer / push back per thread"   |
 
@@ -251,10 +250,8 @@ Known gaps and intentional v1 scoping:
 - **Other agent runtimes (Cursor, Codex, Copilot CLI).** The `SKILL.md` is platform-aware (`AskUserQuestion` and `ScheduleWakeup` are documented as Claude Code primitives with fallback notes), but the runtimes' own plugin formats aren't published yet. Manual install + invoking `cr` directly works on any platform with `gh` + `jq`.
 - **v0.2 — fix-then-reply for `still-applies`.** Today, when you pick `will-fix` on a still-applies thread, you write and commit the fix yourself, then re-run the skill so the next pass labels it `likely-fixed`. v0.2 will integrate the fix step: optionally delegate to `coderabbit:autofix`, or apply the bot's proposed diff directly, then commit and post `Fixed in <sha>` in one motion.
 - **v0.2 — skip threads you already handled** in earlier review rounds (`cr threads --since <ref>`). Real PRs hit 3–5 review rounds; after fixing things and pushing, CodeRabbit re-reviews and adds *new* threads on top of the old ones. The `--since` filter will surface only threads created after a given commit or timestamp, so you walk through the new feedback without re-visiting threads you've already replied to.
-- **`resolved`-label precedence.** Already handled in `cr` — closed threads never surface as `bot-pushback` even if timestamp ordering would suggest it. This rule lives in [`reference.md` § Computed `label` values](skills/coderabbit-threads/reference.md#computed-label-values).
 - **Polling backoff.** Step 7 polls at a fixed 60s interval up to 5 min. Adaptive backoff (start fast, slow down) is a future improvement.
 - **No auto-created issues.** When the user marks a thread `out-of-scope`, the reply notes it but no Linear/Jira/GitHub issue is created. Users do that themselves; the skill stays narrow.
-- **Bash 4+ assumption.** macOS ships bash 3.2. The script works there for most paths but uses `${var,,}` lowercasing and a few `[[ =~ ]]` patterns; zsh users are fine.
 
 ---
 

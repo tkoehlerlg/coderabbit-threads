@@ -2,7 +2,7 @@
 name: coderabbit-threads
 description: Walk through a PR's open CodeRabbit review threads, inspect what the bot wants (including its proposed-fix diffs), and reply per-thread in a conversational loop. Use when handling CodeRabbit feedback across multiple review rounds, when threads need per-thread replies (not a bulk PR summary), when you want to read CodeRabbit's proposed fixes without applying them, when you need to surface bot pushback, or when you want to auto-close threads only after CodeRabbit agrees. Distinct from coderabbit:autofix, which applies fixes and posts one summary comment.
 metadata:
-  version: "0.1.6"
+  version: "0.1.7"
   triggers:
     - coderabbit.?threads
     - cr.?threads
@@ -366,6 +366,8 @@ Open threads remaining: 2 (1 bot-pushback, 1 likely-fixed)
 ## Sticky Approvals — Don't Ask the Same Question Twice
 
 Whenever the skill prompts the user and gets a `yes` / specific-template answer, **immediately follow up with one extra question**: "Use this answer for the rest of this run?"
+
+**Skip the follow-up when there's nothing left to apply it to.** Before asking the sticky, count how many remaining threads in the run would benefit. If 0, don't ask — there's no decision to bind. Prompting the user with a count of 0 is noise.
 
 If the user agrees, store the choice and skip the prompt for every subsequent occurrence of the same category in this skill invocation. Concrete places this applies:
 

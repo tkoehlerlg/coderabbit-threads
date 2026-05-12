@@ -6,6 +6,23 @@ All notable changes to `coderabbit-threads` are tracked here. The format follows
 
 ## [Unreleased]
 
+## [0.1.7] — 2026-05-12
+
+Five fixes from a wording / accessibility pass on the README.
+
+### Fixed
+
+- **Differences table — "User approval" row** was understating how autonomous the skill is. Updated to reflect the v0.1 model: autonomous for `likely-fixed` / `out-of-scope`, user-prompted for `still-applies` / `unclear` / `bot-pushback`, with one upfront consent for auto-close.
+- **Stale Roadmap entries removed**:
+  - "Bash 4+ assumption" — the script avoids bash-4-only features and works on macOS system bash 3.2; the Requirements section already says so. Bullet was self-contradictory.
+  - "`resolved`-label precedence" — already shipped in v0.1.0; not a future item.
+
+### Changed
+
+- **Plugin install ID format** is now explained inline: `coderabbit-threads@coderabbit-threads` is `<plugin-name>@<marketplace-name>`, not a typo. Single-plugin marketplace where both happen to share the name.
+- **"What a run looks like" snippet** no longer shows the awkward "remaining 0 still-applies threads in this run? → n/a" line. The example flow reads cleaner.
+- **SKILL.md sticky-approvals** now explicitly skips the "use for the rest of the run?" follow-up when the count of remaining candidates is 0. Prompting with `n=0` was noise.
+
 ## [0.1.6] — 2026-05-12
 
 README polish for newcomers. No code or skill changes.
