@@ -6,6 +6,24 @@ All notable changes to `coderabbit-threads` are tracked here. The format follows
 
 ## [Unreleased]
 
+## [0.1.9] — 2026-05-12
+
+Don't-give-in-too-quickly round. Agent now evaluates the bot's claim, not just whether the code changed.
+
+### Added
+
+- **New triage label: `contested`.** When the agent reads the cited code and finds a technical reason to push back on the bot's claim (e.g. bot flagged a missing `await` on a synchronous call; bot cited a race condition on a single-writer path), the thread is labeled `contested` instead of `still-applies`.
+- **"Don't give in too quickly" Step 6 sub-section.** For `contested` and `unclear` threads, the agent now lays out both sides briefly (one line per side, no paragraphs) and asks the user with a pre-filled `Won't fix: <one-line technical reason>` template ready to send. The user picks `won't-fix` / `will-fix` / `skip` / `other` in one keystroke.
+- **Step 5 categorized summary** now includes the `contested` count and the line "will show both sides, ask you" so the upfront overview tells the user how many decisions the agent will surface vs. handle autonomously.
+
+### Changed
+
+- **Step 4 triage rule clarified:** "evaluate the bot's claim, not just the code state." Don't default to `still-applies` when the code is unchanged — that's giving in to the bot's framing. Form a technical opinion first.
+- **Sort order** in Step 5 now: `bot-pushback` → `still-applies` → `contested` → `unclear` → `out-of-scope` → `likely-fixed`. Contested threads come right after still-applies so the user handles all judgment calls together.
+- **README "Why it exists"** has a new bullet: "Don't give in too quickly" explains the `contested` label in plain English.
+
+The rule of thumb: don't argue at length in chat — replies stay short factual — but don't roll over either. A one-line `Won't fix: <technical reason>` is the right shape when the bot is wrong.
+
 ## [0.1.8] — 2026-05-12
 
 ### Changed

@@ -2,7 +2,7 @@
 name: coderabbit-threads
 description: Walk through a PR's open CodeRabbit review threads, inspect what the bot wants (including its proposed-fix diffs), and reply per-thread in a conversational loop. Use when handling CodeRabbit feedback across multiple review rounds, when threads need per-thread replies (not a bulk PR summary), when you want to read CodeRabbit's proposed fixes without applying them, when you need to surface bot pushback, or when you want to auto-close threads only after CodeRabbit agrees. Distinct from coderabbit:autofix, which applies fixes and posts one summary comment.
 metadata:
-  version: "0.1.8"
+  version: "0.1.9"
   triggers:
     - coderabbit.?threads
     - cr.?threads
@@ -163,18 +163,27 @@ On top of `cr.label`, read the cited file/line and add your own `triage` label a
 |--------|---------|
 | `bot-pushback` | (inherited from `cr.label`; skip code reading — surface bot's pushback verbatim) |
 | `likely-fixed` | Cited file/line changed in a way that plausibly addresses the issue |
-| `still-applies` | Cited code unchanged or still has the problem |
+| `still-applies` | Cited code unchanged AND the bot's claim looks technically sound |
+| `contested` | Cited code unchanged but the bot's claim looks wrong on the merits — you have a technical reason to push back |
 | `unclear` | Triage indeterminate; user decides |
 | `out-of-scope` | Valid suggestion, but touches code outside this PR's diff |
 
 For threads where `cr.label == bot-pushback`, do NOT re-triage — they're a different category (conversation in progress).
 
+**Evaluate the bot's claim, not just the code.** Triage is not "did the code change?" — it's "is the bot right?" When you read the cited file, hold both perspectives:
+
+- What the bot says is wrong, and why
+- What the code is actually doing, and whether that's intentional
+
+If the bot is correct → `still-applies`. If the bot is technically wrong (e.g., it flagged a missing `await` on a function that returns synchronously; or claimed a race condition on a single-writer path), → `contested`. If you can't tell with confidence → `unclear`. **Don't default to `still-applies` just because the code is unchanged** — that's giving in to the bot's framing.
+
 **Sort order** for the walk-through:
 1. `bot-pushback`
 2. `still-applies`
-3. `unclear`
-4. `out-of-scope`
-5. `likely-fixed`
+3. `contested`
+4. `unclear`
+5. `out-of-scope`
+6. `likely-fixed`
 
 ### Step 5 — Display, Confirm, and Set Self-Close Policy
 
@@ -193,6 +202,7 @@ PR #<n>: <title>
   ✅ Already fixed (likely-fixed):    3   → autonomous "Fixed in <sha>" reply
   📌 Out-of-scope of this PR:         1   → autonomous "Out-of-scope" reply
   ⚠️  Still applies (needs decision):  2   → will ask you per thread
+  ⚔️  Contested (bot likely wrong):    1   → will show both sides, ask you
   ❓ Unclear (couldn't triage):        1   → will ask you per thread
   💬 Bot pushed back on you:           1   → will ask you per thread
 
@@ -286,8 +296,35 @@ For each thread in triage order:
    | `likely-fixed`  | Find the commit SHA that addressed the issue (use `git log --since=<thread-created-at> -- <cited-file>` and pick the most plausible recent commit). Post: `Fixed in <sha> by <one-line change>.` — autonomous, no prompt. |
    | `out-of-scope`  | Post the out-of-scope template autonomously: `Out-of-scope of this PR — should be tracked separately.`           |
    | `still-applies` | **Ask the user**. The right reply depends on whether the user wants to fix it now, defer, or push back — that's a judgment call this skill won't make. Offer: `Will fix in this PR / Won't fix: <reason> / Acknowledged — leaving as-is / Out-of-scope / skip`. |
-   | `unclear`       | **Ask the user**. Triage was indeterminate; let them pick. |
-   | `bot-pushback`  | **Ask the user**. The bot is mid-conversation with them; the next reply is theirs to write. Show the bot's latest comment verbatim and prompt for free-form text or one of the templates below. |
+   | `contested`     | **Ask the user with both sides briefly.** You have a technical reason to push back; surface it. See "Don't give in too quickly" below. |
+   | `unclear`       | **Ask the user.** Triage was indeterminate; surface both sides if there are any. |
+   | `bot-pushback`  | **Ask the user.** The bot is mid-conversation with them; the next reply is theirs to write. Show the bot's latest comment verbatim and prompt for free-form text or one of the templates below. |
+
+   #### Don't give in too quickly — show both sides briefly
+
+   When triage is `contested` (you think the bot is technically wrong) or `unclear` (you have arguments either way), don't just present "what does the bot want?" and a template list. Lay out the disagreement in the briefest form that still lets the user decide quickly:
+
+   ```
+   — Thread 3/7 · contested · apps/api/foo.ts:42 ———————
+   Bot says:  Missing `await` on `notify(...)` — async call result ignored.
+   Why agent disagrees:  `notify` returns `void`, not a Promise — see line 18.
+                         No race condition possible on a sync call.
+
+   Pick:
+     [won't-fix]  Won't fix: notify is synchronous; no await needed.
+     [will-fix]   Will fix in this PR — fix pending.
+     [skip]       Leave the thread open; don't reply this run.
+     [other]      Write a custom reply.
+   ```
+
+   Rules for this presentation:
+
+   - **One line per side** for "Bot says" and "Why agent disagrees" — no paragraphs. The user is making a decision, not reading an essay.
+   - **Pre-fill the "won't-fix" template** with the technical reason the agent identified — the user can accept-as-is or edit before posting.
+   - **Always offer "skip"** so the user can defer without committing either way.
+   - **Don't argue in chat** with the bot from the agent's mouth — every disagreement either gets a one-line `Won't fix: <reason>` reply or a user-typed alternative. No multi-paragraph rebuttals (they invite multi-paragraph pushback).
+
+   When the agent's disagreement is **very high confidence** (e.g., the bot is citing a function that doesn't exist on that line, or repeating a finding already addressed in an unrelated commit), it's still safer to surface to the user with both sides than to autonomous-`Won't fix`. Bot-claim evaluation is genuinely a judgment call.
 
    **Reply templates** (used both for autonomous replies and as shortcuts when the user is asked):
    ```
