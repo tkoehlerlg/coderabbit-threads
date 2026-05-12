@@ -22,7 +22,7 @@ Participation awareness — the agent now knows who's in each conversation, incl
 
 ### Why this shape
 
-Earlier drafts proposed a perspective-aware label (`awaiting-author` when a teammate replied last) but that conflated two orthogonal axes — *whose turn is next in the bot conversation* (label) and *who's actually in the thread* (participation). The label stays minimal and objective; the agent uses the new fields plus `pr_author` and `running_user` to derive perspective itself.
+Earlier drafts proposed a perspective-aware label (`awaiting-author` when a teammate replied last) but that conflated two orthogonal axes — *whose turn is next in the bot (CodeRabbit) conversation* (label) and *who's actually in the thread* (participation). The label stays minimal and objective; the agent uses the new fields plus `pr_author` and `running_user` to derive perspective itself.
 
 ## [0.3.1] — 2026-05-12
 
@@ -31,7 +31,7 @@ Docs-only polish — no behaviour, output, or interface changes.
 ### Changed
 
 - **README intro shrunk to two paragraphs.** Folded the TL;DR sentence into the lead so the opener is one bold framing line plus an autofix-positioning paragraph, instead of three overlapping blocks.
-- **Friction-point framing** added to the intro (one closing line on the lead paragraph) and as a standalone paragraph in `## Why it exists`. Names the problem the skill fixes — most coding agents don't push back on CodeRabbit themselves, which makes the human the copy-paster between bot and code.
+- **Friction-point framing** added to the intro (one closing line on the lead paragraph) and as a standalone paragraph in `## Why it exists`. Names the problem the skill fixes — most coding agents don't push back on CodeRabbit themselves, which makes the human the copy-paster between bot (CodeRabbit) and code.
 - **Editorial pass across README + SKILL.md.** Cut tail-end em-dash appendages, split overloaded sentences, replaced generic-line-after-colon constructions with concrete openers, trimmed filler.
 
 ### Added
