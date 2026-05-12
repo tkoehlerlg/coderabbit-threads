@@ -6,6 +6,16 @@ All notable changes to `coderabbit-threads` are tracked here. The format follows
 
 ## [Unreleased]
 
+## [0.1.6] — 2026-05-12
+
+README polish for newcomers. No code or skill changes.
+
+### Changed
+
+- **Tagline**: "poll for CodeRabbit's reaction" → "wait for CodeRabbit's reaction" — "poll" reads as CLI jargon at first glance.
+- **Sticky approvals** in the "Why it exists" list now includes a one-sentence definition inline ("a `yes` once becomes the default for the remaining threads"), so readers don't have to scroll to the SKILL.md to understand the term.
+- **Roadmap item for `cr threads --since <ref>`** now leads with the user-facing meaning ("skip threads you already handled in earlier review rounds") before mentioning the CLI flag — broadens the audience past CLI hackers.
+
 ## [0.1.5] — 2026-05-12
 
 ### Changed

@@ -1,6 +1,6 @@
 # coderabbit-threads
 
-A Claude Code skill for walking through a pull request's open [CodeRabbit](https://coderabbit.ai) review threads and replying to each one in a conversational loop. Triage each thread, post a per-thread reply (not a bulk PR comment), poll for CodeRabbit's reaction, and only resolve once the bot agrees.
+A Claude Code skill for walking through a pull request's open [CodeRabbit](https://coderabbit.ai) review threads and replying to each one in a conversational loop. Triage each thread, post a per-thread reply (not a bulk PR comment), wait for CodeRabbit's reaction, and only resolve once the bot agrees.
 
 This is the **multi-round conversational counterpart** to the official [`coderabbit:autofix`](https://github.com/coderabbitai/skills) skill. `autofix` applies CodeRabbit's proposed diffs and posts one summary comment. `coderabbit-threads` is what you reach for when you want to acknowledge, push back on, or explicitly defer suggestions thread-by-thread — and have the bot react.
 
@@ -83,7 +83,7 @@ Steps 3 and 4 are where this skill lives. It is intentionally narrow:
 - **Wait for the bot before resolving.** Auto-resolving on reply means the bot can't push back inline.
 - **Reply factually, not persuasively.** Short statements (`Fixed in <sha>`, `Won't fix: <reason>`) end the conversation. Multi-paragraph defenses invite multi-paragraph pushback.
 - **Autonomous for the obvious cases.** `likely-fixed` and `out-of-scope` threads get an auto-generated reply from a fixed template — you installed this skill expecting it to handle threads, not to play 20-questions on each one. The skill asks once at the start whether it may auto-close threads CodeRabbit agrees with; ambiguous threads (`still-applies`, `unclear`, `bot-pushback`) still prompt you for the call.
-- **Sticky approvals.** When you say `yes` to a prompt (auto-close this thread, use this template), the skill follows up with "use this for the rest of the run?" — so a 20-thread PR doesn't become 20 identical prompts.
+- **Sticky approvals.** Every time you say `yes` to a prompt (auto-close this thread, use this reply template), the skill follows up with "use this for the rest of the run?" so a `yes` once becomes the default for the remaining threads — a 20-thread PR doesn't become 20 identical prompts.
 
 Distinct from `coderabbit:autofix`: that skill applies code changes from CodeRabbit's suggested diffs and posts one summary comment. The two compose well — use `autofix` to apply, then `coderabbit-threads` to converse.
 
@@ -250,7 +250,7 @@ Known gaps and intentional v1 scoping:
 
 - **Other agent runtimes (Cursor, Codex, Copilot CLI).** The `SKILL.md` is platform-aware (`AskUserQuestion` and `ScheduleWakeup` are documented as Claude Code primitives with fallback notes), but the runtimes' own plugin formats aren't published yet. Manual install + invoking `cr` directly works on any platform with `gh` + `jq`.
 - **v0.2 — fix-then-reply for `still-applies`.** Today, when you pick `will-fix` on a still-applies thread, you write and commit the fix yourself, then re-run the skill so the next pass labels it `likely-fixed`. v0.2 will integrate the fix step: optionally delegate to `coderabbit:autofix`, or apply the bot's proposed diff directly, then commit and post `Fixed in <sha>` in one motion.
-- **v0.2 — `cr threads --since <ref>`.** Real PRs hit 3–5 review rounds. A `--since` filter surfacing only threads created after a given commit/timestamp would skip the redundant walk-through of threads you already handled.
+- **v0.2 — skip threads you already handled** in earlier review rounds (`cr threads --since <ref>`). Real PRs hit 3–5 review rounds; after fixing things and pushing, CodeRabbit re-reviews and adds *new* threads on top of the old ones. The `--since` filter will surface only threads created after a given commit or timestamp, so you walk through the new feedback without re-visiting threads you've already replied to.
 - **`resolved`-label precedence.** Already handled in `cr` — closed threads never surface as `bot-pushback` even if timestamp ordering would suggest it. This rule lives in [`reference.md` § Computed `label` values](skills/coderabbit-threads/reference.md#computed-label-values).
 - **Polling backoff.** Step 7 polls at a fixed 60s interval up to 5 min. Adaptive backoff (start fast, slow down) is a future improvement.
 - **No auto-created issues.** When the user marks a thread `out-of-scope`, the reply notes it but no Linear/Jira/GitHub issue is created. Users do that themselves; the skill stays narrow.
