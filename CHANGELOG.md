@@ -6,6 +6,18 @@ All notable changes to `coderabbit-threads` are tracked here. The format follows
 
 ## [Unreleased]
 
+## [0.1.10] — 2026-05-12
+
+Naming clarity pass. "bot" was ambiguous — could mean CodeRabbit *or* the user's agent (Claude). Resolved by always naming the actor.
+
+### Changed
+
+- **"bot" → "CodeRabbit" everywhere it referred to CodeRabbit** in README.md and SKILL.md. Code identifiers (`bot-pushback` label, `bot_replied` state value) preserved unchanged — those are technical terms, not prose.
+- **"What a run looks like" snippet** now has a one-line introduction: "This is what the skill does on a PR with four open threads — two get autonomous replies from your agent, two pause for your call, and CodeRabbit's reactions are checked in the background." Removes the from-cold-stare problem where readers landed straight in the code block.
+- **Categorized-summary alignment** tightened up so columns line up after the longer "CodeRabbit pushed back on you" replaced "Bot pushed back on you".
+
+This is a wording-only release: zero changes to skill behaviour, CLI surface, or workflow.
+
 ## [0.1.9] — 2026-05-12
 
 Don't-give-in-too-quickly round. Agent now evaluates the bot's claim, not just whether the code changed.
