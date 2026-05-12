@@ -57,6 +57,6 @@ Do not duplicate the skill's workflow inline. Your job in this command is only t
 
 ### Quick reference for the user
 
-- `/coderabbit-threads:review` — use the PR for the current branch
-- `/coderabbit-threads:review 142` — explicit PR number on this repo
-- `/coderabbit-threads:review https://github.com/owner/repo/pull/142` — explicit URL (works in any working directory)
+- `/coderabbit-threads` — use the PR for the current branch
+- `/coderabbit-threads 142` — explicit PR number on this repo
+- `/coderabbit-threads https://github.com/owner/repo/pull/142` — explicit URL (works in any working directory)

@@ -6,6 +6,18 @@ All notable changes to `coderabbit-threads` are tracked here. The format follows
 
 ## [Unreleased]
 
+## [0.1.5] — 2026-05-12
+
+### Changed
+
+- **Slash command file renamed: `commands/review.md` → `commands/coderabbit-threads.md`.** This makes the command invokable as just `/coderabbit-threads` (no `:review` suffix). Typing `/coderabbit-threads` in Claude Code's prompt now fires the command directly instead of just highlighting the namespace.
+
+  - `/coderabbit-threads` — current-branch PR
+  - `/coderabbit-threads 142` — explicit PR number on this repo
+  - `/coderabbit-threads https://github.com/owner/repo/pull/142` — explicit URL
+
+  This is a cosmetic rename; the command's behaviour is unchanged from v0.1.4.
+
 ## [0.1.4] — 2026-05-12
 
 ### Changed

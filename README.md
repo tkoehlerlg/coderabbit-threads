@@ -153,9 +153,9 @@ Then in a Claude Code session:
 Or use the bundled slash command:
 
 ```text
-/coderabbit-threads:review                                       # current-branch PR
-/coderabbit-threads:review 142                                   # explicit PR number on this repo
-/coderabbit-threads:review https://github.com/owner/repo/pull/14 # explicit URL
+/coderabbit-threads                                       # current-branch PR
+/coderabbit-threads 142                                   # explicit PR number on this repo
+/coderabbit-threads https://github.com/owner/repo/pull/14 # explicit URL
 ```
 
 If the current branch has no PR, the command lists recent open PRs and asks which one to review — it never silently guesses.
