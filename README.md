@@ -27,8 +27,11 @@ PR #142 · ready · last CodeRabbit activity 9m ago
 | 3 | likely-fixed  | 🟡 LOW   | apps/app/src/ui.tsx:88         | Use semantic button             |
 | 4 | out-of-scope  | 🟡 LOW   | packages/db/src/migrate.ts:14  | Drop legacy column              |
 
-🚶 Go through threads?  ⏭ Skip all   ❌ Cancel
-> go
+How should I handle these?
+  🤝 Together — pause on every judgment call
+  🤖 Auto     — handle on my own, only ping for the hard cases
+  ❌ Cancel
+> auto
 
 May I auto-resolve threads when CodeRabbit agrees?
   ✅ Yes, auto-close   🙋 Ask me each time   ❌ Never auto-close
@@ -38,16 +41,13 @@ May I auto-resolve threads when CodeRabbit agrees?
 CodeRabbit replied after your last reply:
   > The await is still missing on line 12. Was the fix landed?
 
-(judgment call — asking you)
+(needs your call — bot-pushback always pings, even in auto)
 Reply: [fixed-in <sha>] [won't-fix <reason>] [out-of-scope] [skip]
 > fixed-in 4af1c9d
 Posted: "Fixed in 4af1c9d by adding await on subscribeAll."
 
 — Thread 2/4 · still-applies · apps/api/src/scheduled.ts:80 ———
-(judgment call — asking you)
-Reply: [will-fix] [won't-fix <reason>] [acknowledged <reason>] [out-of-scope] [skip]
-> will-fix
-Posted: "Will fix in this PR — fix pending."
+Posted (auto, default for still-applies): "Will fix in this PR — fix pending."
 
 (In v0.1 you write and commit the fix yourself, then re-run the skill —
 the next pass labels this thread `likely-fixed` and posts `Fixed in <sha>`
@@ -60,13 +60,13 @@ Posted (auto): "Fixed in 4af1c9d by switching <Button> to semantic markup."
 — Thread 4/4 · out-of-scope · packages/db/src/migrate.ts:14 ——
 Posted (auto): "Out-of-scope of this PR — should be tracked separately."
 
-Polling for CodeRabbit reactions (up to 5 min):
+Polling for CodeRabbit reactions (every 60s, up to 5 min):
   ✅ PRT_a — CodeRabbit agreed, auto-resolved
   ✅ PRT_b — CodeRabbit agreed, auto-resolved
   ⏳ PRT_c — no reaction yet
   🔁 PRT_d — CodeRabbit pushed back, will surface on next run
 
-Handled 4 threads. Posted 4 replies (2 autonomous, 2 user-chosen).
+Handled 4 threads. Posted 4 replies (3 autonomous, 1 user-chosen).
 2 closed on CodeRabbit agreement; 2 still open.
 ```
 
@@ -87,8 +87,9 @@ Steps 3 and 4 are where this skill lives. It is intentionally narrow:
 - **Wait for CodeRabbit before resolving.** Auto-resolving on reply means CodeRabbit can't push back inline.
 - **Reply factually, not persuasively.** Short statements (`Fixed in <sha>`, `Won't fix: <reason>`) end the conversation. Multi-paragraph defenses invite multi-paragraph pushback.
 - **Don't give in too quickly.** When the agent reads a thread, it evaluates CodeRabbit's *claim*, not just whether the code changed. If CodeRabbit looks technically wrong (claims a missing `await` on a sync call, flags a race condition on a single-writer path), the thread is labelled `contested` — the agent surfaces both sides briefly and asks you to decide, with a pre-filled `Won't fix: <one-line reason>` template ready to send.
-- **Autonomous for the obvious cases.** `likely-fixed` and `out-of-scope` threads get an auto-generated reply from a fixed template — you installed this skill expecting it to handle threads, not to play 20-questions on each one. The skill asks once at the start whether it may auto-close threads CodeRabbit agrees with; ambiguous threads (`still-applies`, `unclear`, `bot-pushback`) still prompt you for the call.
-- **Sticky approvals.** Every time you say `yes` to a prompt (auto-close this thread, use this reply template), the skill follows up with "use this for the rest of the run?" so a `yes` once becomes the default for the remaining threads — a 20-thread PR doesn't become 20 identical prompts.
+- **Two modes — together, or auto.** At the start of every run, the skill asks one question: do you want to handle threads *together* (pause on every judgment call), or have the agent run on its *own* and only ping you when it truly needs guidance? Auto mode is the default expectation for a 20-thread PR — the agent picks sensible defaults for `still-applies` (`Will fix in this PR`) and posts confident `Won't fix: <one-line technical reason>` on `contested` threads where the agent's disagreement is solid. It still pings you for `unclear`, `bot-pushback`, and low-confidence `contested` — the cases where the call genuinely isn't the agent's to make.
+- **One consent gate for auto-close.** After the mode choice, the skill asks once whether it may auto-resolve threads CodeRabbit agrees with. Closing is the one irreversible action from your perspective, so it gets its own gate.
+- **Sticky approvals.** Every time you say `yes` to a prompt (close this thread, use this reply template), the skill follows up with "use this for the rest of the run?" so a `yes` once becomes the default for the remaining threads — a 20-thread PR doesn't become 20 identical prompts.
 
 Distinct from `coderabbit:autofix`: that skill applies code changes from CodeRabbit's suggested diffs and posts one summary comment. The two compose well — use `autofix` to apply, then `coderabbit-threads` to converse.
 
@@ -105,8 +106,8 @@ The skill follows an 8-step workflow. The full runbook is in [`skills/coderabbit
 | 2 | Resolve PR        | Find the current branch's PR, or offer to create one                 |
 | 3 | Check CodeRabbit status  | Bail if PR is merged, closed, draft, or CodeRabbit is still working  |
 | 4 | Triage threads    | Label each open thread: `bot-pushback`, `still-applies`, `likely-fixed`, `unclear`, `out-of-scope` |
-| 5 | Confirm + policy  | Show compact table; ask to proceed?; ask self-close policy (auto / ask / never) |
-| 6 | Per-thread loop   | Autonomous for `likely-fixed` and `out-of-scope`; ask user for `still-applies` / `unclear` / `bot-pushback` |
+| 5 | Confirm + policy  | Show compact table; ask **together vs auto**; ask self-close policy (auto / ask / never) |
+| 6 | Per-thread loop   | Autonomous for `likely-fixed` / `out-of-scope` (both modes), plus `still-applies` / high-confidence `contested` in **auto** mode; ask user for `unclear` / `bot-pushback` always |
 | 7 | Poll for reaction | Check whether CodeRabbit agreed with each reply; apply self-close policy on agreement |
 | 8 | Summary           | Terminal-only summary. **No PR-level comment is ever posted.**        |
 
@@ -243,7 +244,7 @@ Both skills target CodeRabbit, and they compose — but the responsibilities are
 | What it does        | Applies CodeRabbit's proposed code diffs      | Replies to threads conversationally            |
 | Where comments land | One summary comment at the PR level           | One reply per thread, inline                   |
 | Rounds              | Single-shot                                   | Multi-round; surfaces CodeRabbit pushback             |
-| User approval       | Per-diff approve / reject                     | Autonomous for `likely-fixed` / `out-of-scope`; user-prompted for `still-applies` / `unclear` / `bot-pushback`; one upfront consent for auto-close |
+| User approval       | Per-diff approve / reject                     | Two upfront gates (together-vs-auto, auto-close policy); after that autonomous for `likely-fixed` / `out-of-scope` (both modes) and `still-applies` / high-confidence `contested` (auto mode); user-prompted for `unclear` / `bot-pushback` always |
 | Resolution          | CodeRabbit resolves on agreement (via PR comment)    | CodeRabbit resolves on agreement (via thread reply)   |
 | Best for            | "Apply the suggestions I agree with"          | "Acknowledge / defer / push back per thread"   |
 

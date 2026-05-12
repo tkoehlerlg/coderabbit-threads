@@ -6,6 +6,17 @@ All notable changes to `coderabbit-threads` are tracked here. The format follows
 
 ## [Unreleased]
 
+## [0.1.12] — 2026-05-12
+
+Mode choice up front. The "Go through threads? / Skip all / Cancel" gate at the start of Step 5 was redundant — anyone running the skill already wants to handle threads. Replaced with a more useful choice: *how interactive* should this run feel.
+
+### Changed
+
+- **First user prompt is now "together vs auto", not "proceed vs cancel".** After the overview, the skill asks: **🤝 Together** (pause on every judgment call) or **🤖 Auto** (handle on my own, only ping for the hard cases). Cancel remains as an escape. Stored as `MODE`.
+- **Step 6 branches on `MODE`.** Both modes auto-reply for `likely-fixed` and `out-of-scope`. **Auto** additionally posts `Will fix in this PR — fix pending.` for `still-applies`, and `Won't fix: <one-line technical reason>` for `contested` *when the agent's disagreement is high-confidence* (specific, citable). `unclear` and `bot-pushback` still always ping the user — even in auto.
+- **README "What a run looks like"** updated to show the auto-mode flow: a `still-applies` thread that previously prompted now posts `Will fix in this PR — fix pending.` autonomously. The bot-pushback thread still pauses.
+- **README "Why it exists" section** rewritten to explain the two modes, the one consent gate for auto-close, and that bot-pushback always pings.
+
 ## [0.1.11] — 2026-05-12
 
 Wording pass.

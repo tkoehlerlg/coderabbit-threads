@@ -2,7 +2,7 @@
 name: coderabbit-threads
 description: Go through a PR's open CodeRabbit review threads, inspect what CodeRabbit wants (including its proposed-fix diffs), and reply per-thread in a conversational loop. Use when handling CodeRabbit feedback across multiple review rounds, when threads need per-thread replies (not a bulk PR summary), when you want to read CodeRabbit's proposed fixes without applying them, when you need to surface CodeRabbit pushback, or when you want to auto-close threads only after CodeRabbit agrees. Distinct from coderabbit:autofix, which applies fixes and posts one summary comment.
 metadata:
-  version: "0.1.11"
+  version: "0.1.12"
   triggers:
     - coderabbit.?threads
     - cr.?threads
@@ -227,21 +227,32 @@ The categorized summary makes the agent's plan explicit *before* anything happen
 
 Severity icons: 🔴 critical/high → CRIT, 🟠 medium → HIGH, 🟡 minor/low → MEDIUM/LOW, 🟢 info → INFO.
 
-#### (c) Ask the user to proceed
+#### (c) Ask the user how to handle these
 
 Only after (a) and (b) are on screen, ask (via `AskUserQuestion` on Claude Code; numbered list on other platforms):
 
-- 🚶 Go through threads
-- ⏭️ Skip all
-- ❌ Cancel
+> How should I handle these?
+>
+> - 🤝 **Together** — pause on every judgment call (`still-applies`, `contested`, `unclear`, `bot-pushback`)
+> - 🤖 **Auto** — handle on my own, only ping for the hard cases (`unclear`, `bot-pushback`, low-confidence `contested`)
+> - ❌ **Cancel**
+
+Store the answer as `MODE` (`together` / `auto`) and use it in Step 6.
 
 Route:
-- Go through → continue to **self-close policy** below
-- Skip all / Cancel → EXIT
+- Together / Auto → continue to **self-close policy** below
+- Cancel → EXIT
 
-#### Self-close policy (only when going through threads)
+**The two modes shift where the agent draws the line on autonomy.** Both modes auto-reply for `likely-fixed` and `out-of-scope` — those don't need a human in the loop. The difference is what the agent does on `still-applies` and `contested`:
 
-Before posting any replies, ask **once**:
+- **Together:** ask the user on every `still-applies`, `contested`, `unclear`, `bot-pushback`. This is right when the user wants oversight thread-by-thread (small PRs, new team conventions, learning what CodeRabbit flags).
+- **Auto:** default `still-applies` to `Will fix in this PR — fix pending` (the agent commits the user to fixing it); auto-post `Won't fix: <one-line reason>` on `contested` *when the agent's technical disagreement is high-confidence*; still ask on `unclear`, `bot-pushback`, and low-confidence `contested`. This is right for the common case — the user installed the skill to handle threads, not to vote on each one.
+
+**Bot-pushback always pings, even in auto.** CodeRabbit replied to the user's previous reply; the next response is theirs to write.
+
+#### Self-close policy
+
+After `MODE`, ask **once**:
 
 > CodeRabbit usually agrees with replies like "Fixed in <sha>" and resolves the thread on its next pass. May I auto-resolve threads when CodeRabbit agrees?
 >
@@ -251,7 +262,7 @@ Before posting any replies, ask **once**:
 
 Store the answer as `RESOLVE_POLICY` (`auto` / `ask` / `never`) and use it in Step 7.
 
-**Why this is the one consent gate:** the user installed this skill expecting it to handle threads. Per-reply approval defeats that — they didn't install a thread-by-thread proofreader. Replies are generated autonomously from triage (Step 6). The one thing that's irreversible from the user's perspective is *closing* a thread — once closed it drops out of the actionable set — so self-close gets the one explicit consent.
+**Why these are the two consent gates:** the user installed this skill expecting it to handle threads. Per-reply approval defeats that — they didn't install a thread-by-thread proofreader. The two upfront gates capture the only choices that genuinely vary by user/PR: *how interactive should this run feel* (`MODE`), and *am I OK with the skill closing threads on my behalf* (`RESOLVE_POLICY`). Everything else is generated autonomously from triage (Step 6), gated by those two answers.
 
 ### Step 6 — Per-Thread Interactive Loop
 
@@ -292,16 +303,20 @@ For each thread in triage order:
    - `out-of-scope`: "Touches <other file/package> outside this PR's diff."
    - `bot-pushback`: skip — surface CodeRabbit's latest comment verbatim.
 
-3. **Generate the reply autonomously based on triage** — *don't* ask the user "may I post this?" The user installed the skill expecting it to handle threads.
+3. **Generate the reply based on triage and `MODE`.** The action per triage depends on the mode chosen in Step 5:
 
-   | Triage          | Action                                                                                                          |
-   |-----------------|-----------------------------------------------------------------------------------------------------------------|
-   | `likely-fixed`  | Find the commit SHA that addressed the issue (use `git log --since=<thread-created-at> -- <cited-file>` and pick the most plausible recent commit). Post: `Fixed in <sha> by <one-line change>.` — autonomous, no prompt. |
-   | `out-of-scope`  | Post the out-of-scope template autonomously: `Out-of-scope of this PR — should be tracked separately.`           |
-   | `still-applies` | **Ask the user**. The right reply depends on whether the user wants to fix it now, defer, or push back — that's a judgment call this skill won't make. Offer: `Will fix in this PR / Won't fix: <reason> / Acknowledged — leaving as-is / Out-of-scope / skip`. |
-   | `contested`     | **Ask the user with both sides briefly.** You have a technical reason to push back; surface it. See "Don't give in too quickly" below. |
-   | `unclear`       | **Ask the user.** Triage was indeterminate; surface both sides if there are any. |
-   | `bot-pushback`  | **Ask the user.** CodeRabbit is mid-conversation with them; the next reply is theirs to write. Show CodeRabbit's latest comment verbatim and prompt for free-form text or one of the templates below. |
+   | Triage          | `MODE = together`                                                | `MODE = auto`                                                                            |
+   |-----------------|------------------------------------------------------------------|------------------------------------------------------------------------------------------|
+   | `likely-fixed`  | Auto-post `Fixed in <sha> by <one-line change>.`                | Same — auto-post `Fixed in <sha> by <one-line change>.`                                  |
+   | `out-of-scope`  | Auto-post `Out-of-scope of this PR — should be tracked separately.` | Same — auto-post `Out-of-scope of this PR — should be tracked separately.`               |
+   | `still-applies` | **Ask the user.** Offer: `Will fix / Won't fix / Acknowledged / Out-of-scope / skip`. | **Auto-post `Will fix in this PR — fix pending.`** — the user delegated; the safest default is to commit to the fix. |
+   | `contested`     | **Ask the user with both sides briefly.** See "Don't give in too quickly" below. | **High-confidence disagreement** → auto-post `Won't fix: <one-line technical reason>`. **Low-confidence** → ask with both sides. |
+   | `unclear`       | **Ask the user.** Triage was indeterminate; surface both sides if there are any. | **Ask the user.** Same — unclear is by definition beyond the agent's autonomous reach.    |
+   | `bot-pushback`  | **Ask the user.** CodeRabbit is mid-conversation; the next reply is theirs to write. | **Ask the user.** Same — bot-pushback always pings, even in auto.                          |
+
+   **What "high-confidence" means for auto-`contested`:** the agent has a *specific, citable* technical reason (a line number where the inverse is true, a function signature that contradicts the bot's claim, a single-writer invariant the bot ignored). If the disagreement reduces to "feels off" or "I think the bot is wrong", that's not high-confidence — ask the user.
+
+   **For `likely-fixed`:** Find the commit SHA that addressed the issue (use `git log --since=<thread-created-at> -- <cited-file>` and pick the most plausible recent commit).
 
    #### Don't give in too quickly — show both sides briefly
 
@@ -485,8 +500,8 @@ Out-of-scope of this PR — should be tracked separately. (deferring to a separa
 | 2 | Resolve PR | `gh pr view` |
 | 3 | Check CodeRabbit + fetch | `cr status`, `cr threads --filter open` |
 | 4 | Triage | Read cited files; assign labels |
-| 5 | Display + proceed-confirm + set `RESOLVE_POLICY` | AskUserQuestion (twice: proceed?, policy?) |
-| 6 | Per-thread reply (autonomous for likely-fixed / out-of-scope; ask user for still-applies / unclear / bot-pushback) | `cr reply` |
+| 5 | Display + set `MODE` (together/auto) + set `RESOLVE_POLICY` | AskUserQuestion (twice: mode?, policy?) |
+| 6 | Per-thread reply (autonomous for likely-fixed / out-of-scope in both modes; + still-applies / high-confidence contested in auto; ask user for unclear / bot-pushback always) | `cr reply` |
 | 7 | Poll for CodeRabbit + apply `RESOLVE_POLICY` | `cr check` + `cr resolve` + `ScheduleWakeup` (60 s) |
 | 8 | Summary | Terminal output only |
 

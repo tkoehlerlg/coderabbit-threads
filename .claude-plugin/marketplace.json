@@ -8,8 +8,8 @@
   "plugins": [
     {
       "name": "coderabbit-threads",
-      "description": "Walk through a PR's open CodeRabbit review threads, triage each one, and reply per-thread — the conversational counterpart to coderabbit:autofix.",
-      "version": "0.1.11",
+      "description": "Go through a PR's open CodeRabbit review threads, triage each one, and reply per-thread — the conversational counterpart to coderabbit:autofix.",
+      "version": "0.1.12",
       "source": "./",
       "author": {
         "name": "Torben Köhler",
