@@ -87,6 +87,8 @@ Handled 4 threads. Posted 4 replies (3 autonomous, 1 user-chosen).
 - It **asks you only** on the genuine judgment calls (`unclear`, `bot-pushback`, low-confidence `contested`).
 - It detects when CodeRabbit has been paused on a PR and lets you resume, run a one-time review, or skip straight to existing threads.
 
+**The friction point this fixes.** Most coding agents don't push back on CodeRabbit themselves. They apply whatever it suggests or punt the decision back to you, which turns *you* into the copy-paster between bot and code: evaluating each claim, dictating each reply, then pasting it back. You're a developer, not a relay. `coderabbit-threads` evaluates CodeRabbit's claims the way you would, fixes what's worth fixing, and pushes back when the bot is wrong, so you only weigh in on the genuine judgment calls.
+
 CodeRabbit reads a PR, posts a review with N threads (sometimes 20+), and then waits. The typical human flow is:
 
 1. Scan all threads, decide which are worth acting on.
