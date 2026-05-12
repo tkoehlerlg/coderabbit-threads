@@ -51,7 +51,10 @@ parse_pr_url() {
   fi
 }
 
-# Fetch all review threads for the PR, fully paginated. Stdout: GraphQL `nodes` array (concatenated).
+# Fetch all review threads for the PR, fully paginated at the thread level.
+# Comments per thread are capped at the first 100 (acceptable: threads with
+# >100 comments are an edge case and the most recent activity is preserved).
+# The agent is never expected to paginate — `cr` owns all pagination.
 fetch_review_threads_raw() {
   local cursor="" all="[]" response has_next rc
   while :; do
@@ -136,6 +139,8 @@ normalize_threads() {
       ($body // "")
       | capture("<details>\\s*<summary>[^<]*Prompt for AI Agents[^<]*</summary>(?<p>[\\s\\S]*?)</details>"; "g")
       | .p // "" | gsub("^\\s+|\\s+$"; "");
+    def has_proposed_fix($body):
+      ($body // "") | test("<summary>[^<]*\\b(proposed|suggested)\\b[^<]*\\bfix\\b[^<]*</summary>"; "i");
     def extract_title($body):
       # CodeRabbit body starts with a severity header line, then blank, then **Title**.
       # Find the first line wrapped in **...**; fall back to first non-empty line.
@@ -178,6 +183,8 @@ normalize_threads() {
           root_body: $root.body,
           ai_prompt: extract_ai_prompt($root.body),
           comments: ($cs | map({id: .databaseId, author: .author.login, body: .body, created_at: .createdAt})),
+          created_at: ($root.createdAt // null),
+          has_proposed_fix: ($bot_cs | map(has_proposed_fix(.body)) | any),
           last_bot_comment_id: ($last_bot.databaseId // null),
           last_bot_comment_at: ($last_bot.createdAt // null),
           last_human_comment_at: ($last_human.createdAt // null),
@@ -199,25 +206,78 @@ apply_filter() {
   esac
 }
 
+# Resolve --since <ref> to an ISO-8601 UTC timestamp.
+# Accepts: commit SHA (7-40 hex chars), ISO timestamp (passes through), or relative duration (e.g. 24h, 7d, 1w, 30m, 90s).
+# Echoes the ISO timestamp on stdout; exits non-zero on bad input.
+resolve_since_ref() {
+  local ref="$1"
+  # ISO-8601 timestamp passthrough — anything with a `T` and digits, leave it alone.
+  if [[ "$ref" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T ]]; then
+    printf '%s\n' "$ref"; return 0
+  fi
+  # Relative duration: <number><unit>, unit ∈ s/m/h/d/w
+  if [[ "$ref" =~ ^([0-9]+)([smhdw])$ ]]; then
+    local n="${BASH_REMATCH[1]}" unit="${BASH_REMATCH[2]}" secs
+    case "$unit" in
+      s) secs="$n" ;;
+      m) secs=$(( n * 60 )) ;;
+      h) secs=$(( n * 3600 )) ;;
+      d) secs=$(( n * 86400 )) ;;
+      w) secs=$(( n * 604800 )) ;;
+    esac
+    # BSD date (macOS) vs GNU date — try both.
+    date -u -v-"${secs}"S +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || \
+      date -u -d "@$(($(date +%s) - secs))" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || \
+      { echo "cr: cannot resolve --since '$ref' (date arithmetic unavailable)" >&2; return 1; }
+    return 0
+  fi
+  # Commit SHA (7-40 hex chars): use git to look up the commit date.
+  if [[ "$ref" =~ ^[0-9a-f]{7,40}$ ]]; then
+    local ts
+    ts=$(git show -s --format=%cI "$ref" 2>/dev/null) || {
+      echo "cr: --since '$ref' looks like a commit SHA but git show failed (not a git repo, or commit not found)" >&2
+      return 1
+    }
+    printf '%s\n' "$ts"; return 0
+  fi
+  echo "cr: cannot interpret --since '$ref' (expected commit SHA, ISO timestamp, or duration like 24h / 7d / 1w)" >&2
+  return 1
+}
+
+apply_since() {
+  local since_iso="$1"
+  jq -c --arg since "$since_iso" '[ .[] | select((.created_at // "") >= $since) ]'
+}
+
 # --- subcommands -----------------------------------------------------------
 
 cmd_threads() {
-  local pr_url="" filter="open"
+  local pr_url="" filter="open" since_ref=""
   while [ $# -gt 0 ]; do
     case "$1" in
       --filter) filter="${2:-}"; shift 2 ;;
       --filter=*) filter="${1#--filter=}"; shift ;;
+      --since) since_ref="${2:-}"; shift 2 ;;
+      --since=*) since_ref="${1#--since=}"; shift ;;
       --*) die "unknown flag: $1" ;;
       *)
         [ -z "$pr_url" ] && pr_url="$1" || die "too many positional args: $1"
         shift ;;
     esac
   done
-  [ -z "$pr_url" ] && die "usage: cr threads <pr-url> [--filter open|all|unresolved|outdated|pushback]"
+  [ -z "$pr_url" ] && die "usage: cr threads <pr-url> [--filter open|all|unresolved|outdated|pushback] [--since <ref>]"
   parse_pr_url "$pr_url"
+  local since_iso=""
+  if [ -n "$since_ref" ]; then
+    since_iso=$(resolve_since_ref "$since_ref") || exit 1
+  fi
   local raw
   raw=$(fetch_review_threads_raw)
-  printf '%s' "$raw" | normalize_threads | apply_filter "$filter"
+  if [ -n "$since_iso" ]; then
+    printf '%s' "$raw" | normalize_threads | apply_filter "$filter" | apply_since "$since_iso"
+  else
+    printf '%s' "$raw" | normalize_threads | apply_filter "$filter"
+  fi
 }
 
 cmd_reply() {
@@ -502,11 +562,14 @@ EOF
       cat <<'EOF'
 
 > [!TIP]
-> **This thread contains a proposed-fix diff** under `<details><summary>Proposed fix</summary>` in the bot's body. The default mode above shows only the distilled AI-prompt description; the actual diff is hidden until you run:
+> **This thread contains a proposed-fix diff.** Two ways to inspect it:
 >
 > ```bash
-> cr context <pr-url> <thread-id> --full
+> cr proposed-fix <pr-url> <thread-id>    # just the unified diff (git-apply-able)
+> cr context      <pr-url> <thread-id> --full   # full conversation + diff inline
 > ```
+>
+> For `still-applies` fix-then-reply: prefer `cr proposed-fix` piped to `git apply --check` — if it applies cleanly, use it verbatim; if not, fall back to the agent writing the fix.
 
 EOF
     else
@@ -544,6 +607,42 @@ Reply templates (steer factual, not persuasive):
 EOF
 }
 
+cmd_proposed_fix() {
+  local pr_url="${1:-}" thread_id="${2:-}"
+  [ -z "$pr_url" ] || [ -z "$thread_id" ] && \
+    die "usage: cr proposed-fix <pr-url> <thread-id>"
+  parse_pr_url "$pr_url"
+
+  local thread
+  thread=$(fetch_review_threads_raw | normalize_threads | jq -c --arg id "$thread_id" '.[] | select(.thread_id == $id)')
+  [ -z "$thread" ] && die "thread '$thread_id' not found on PR (or not a CodeRabbit thread)"
+
+  # Walk bot comments newest-first; for each, look inside any <details><summary>...proposed/suggested...fix...</summary>...</details>
+  # for the first ```diff (or plain ```) code block and print its contents. Exit 1 if no usable diff is found.
+  local diff
+  diff=$(jq -r '
+    def is_bot($a): ($a == "coderabbitai" or $a == "coderabbit" or $a == "coderabbitai[bot]" or $a == "coderabbit[bot]");
+    (.comments // [])
+    | map(select(is_bot(.author)))
+    | reverse                  # newest first
+    | map(.body)
+    | map(
+        capture("<details>\\s*<summary>[^<]*\\b(?:proposed|suggested)\\b[^<]*\\bfix\\b[^<]*</summary>(?<inner>[\\s\\S]*?)</details>"; "i")
+        // null
+      )
+    | map(select(. != null) | .inner)
+    | first // ""
+    | capture("```(?:diff)?\\s*\\n(?<d>[\\s\\S]*?)\\n```"; "i")
+    | (.d // "")
+  ' <<<"$thread")
+
+  if [ -z "$diff" ]; then
+    echo "cr: no proposed-fix diff found on thread '$thread_id'" >&2
+    exit 1
+  fi
+  printf '%s\n' "$diff"
+}
+
 cmd_check() {
   local pr_url="${1:-}" thread_id="${2:-}" our_id="${3:-}"
   [ -z "$pr_url" ] || [ -z "$thread_id" ] || [ -z "$our_id" ] && \
@@ -577,23 +676,25 @@ cmd_check() {
 
 cmd="${1:-}"; shift || true
 case "$cmd" in
-  threads) cmd_threads "$@" ;;
-  reply)   cmd_reply "$@" ;;
-  resolve) cmd_resolve "$@" ;;
-  status)  cmd_status "$@" ;;
-  check)   cmd_check "$@" ;;
-  context) cmd_context "$@" ;;
+  threads)      cmd_threads "$@" ;;
+  reply)        cmd_reply "$@" ;;
+  resolve)      cmd_resolve "$@" ;;
+  status)       cmd_status "$@" ;;
+  check)        cmd_check "$@" ;;
+  context)      cmd_context "$@" ;;
+  proposed-fix) cmd_proposed_fix "$@" ;;
   ""|-h|--help|help)
     cat <<'EOF'
 cr — CodeRabbit review-thread CLI
 
 Usage:
-  cr threads <pr-url> [--filter <name>]
-  cr context <pr-url> <thread-id> [--full]
-  cr reply   <pr-url> <thread-id> <body>
-  cr resolve <pr-url> <thread-id>
-  cr status  <pr-url> [--plain]
-  cr check   <pr-url> <thread-id> <our-comment-id>
+  cr threads      <pr-url> [--filter <name>] [--since <ref>]
+  cr context      <pr-url> <thread-id> [--full]
+  cr proposed-fix <pr-url> <thread-id>
+  cr reply        <pr-url> <thread-id> <body>
+  cr resolve      <pr-url> <thread-id>
+  cr status       <pr-url> [--plain]
+  cr check        <pr-url> <thread-id> <our-comment-id>
 
 Filters for `cr threads` (default: open):
   open        unresolved AND not outdated  (the actionable set)
@@ -601,6 +702,11 @@ Filters for `cr threads` (default: open):
   outdated    bot considered them possibly-fixed but they're still unresolved
   pushback    threads where the bot replied AFTER your last reply
   all         every CodeRabbit thread on the PR (no filter)
+
+--since <ref> for `cr threads` — drop threads created before <ref>. Accepts:
+  commit SHA      e.g. 4af1c9d (uses the commit's authored date)
+  ISO timestamp   e.g. 2026-05-12T10:00:00Z
+  duration        e.g. 24h / 7d / 1w / 30m / 90s (now minus the duration)
 
 Exit codes:
   0  success

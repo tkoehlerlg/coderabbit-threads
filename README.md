@@ -168,6 +168,26 @@ Or use the bundled slash command:
 
 If the current branch has no PR, the command lists recent open PRs and asks which one to review — it never silently guesses.
 
+### Other agent runtimes
+
+The `cr` CLI is plain bash + `gh` + `jq` — it runs anywhere. The skill *runbook* (SKILL.md) is platform-aware but degrades to portable shell-only behavior when host primitives aren't available.
+
+| Runtime | Status | How to install |
+|---------|--------|----------------|
+| **Claude Code** | Verified | Plugin marketplace (above) — `AskUserQuestion`, `ScheduleWakeup`, `/coderabbit-threads` slash command, sticky approvals all work natively. |
+| **Copilot CLI** | Expected to work (not yet verified) | Manual install, then ask "go through CodeRabbit threads on this PR". Activation via the standard `skill` tool + trigger phrases. The skill detects missing `ScheduleWakeup` and falls back to "re-run in ~2 min" polling. |
+| **Codex CLI** | Expected to work (not yet verified) | Same as Copilot CLI — manual install + trigger phrase. Uses Codex's `Skill` tool equivalents. |
+| **Gemini CLI** | Expected to work (not yet verified) | Manual install + `activate_skill`. Tool name mapping uses superpowers-style `GEMINI.md` if one exists in your repo. |
+| **Other / bare `cr` use** | Always works | `cr` is the surface most of the value lives on — `cr threads`, `cr context`, `cr proposed-fix`, `cr reply`, `cr resolve` are all callable from any shell once `gh` is authenticated. The SKILL.md runbook is the choreography on top; you can also follow it by hand. |
+
+What's Claude-Code-only:
+
+- `AskUserQuestion` interactive prompts → fallback: numbered list with stdin prompt.
+- `ScheduleWakeup` 60s polling → fallback: print "re-run in ~2 min to check CodeRabbit's reactions" and exit.
+- `/coderabbit-threads` slash command → fallback: ask "go through CodeRabbit threads".
+
+The triage logic, the `MODE` (together/auto) gate, the `RESOLVE_POLICY` gate, sticky approvals, fix-then-reply, `cr proposed-fix`, and `--since <ref>` all work the same on every runtime.
+
 ### Requirements
 
 - [`gh`](https://cli.github.com/) (GitHub CLI), authenticated: `gh auth status` must succeed
@@ -185,8 +205,9 @@ No tokens, no extra config. `cr` uses whatever `gh auth login` configured.
 
 | Subcommand                                         | Purpose                                                       |
 |----------------------------------------------------|---------------------------------------------------------------|
-| `cr threads <pr-url> [--filter <f>]`               | List CodeRabbit threads on a PR (paginated, normalized JSON)  |
+| `cr threads <pr-url> [--filter <f>] [--since <ref>]` | List CodeRabbit threads on a PR (paginated, normalized JSON). `--since <ref>` drops threads older than a commit SHA / ISO timestamp / duration (`24h`, `7d`, `1w`). |
 | `cr context <pr-url> <thread-id> [--full]`         | Emit a markdown block of one thread's context and how to reply |
+| `cr proposed-fix <pr-url> <thread-id>`             | Extract just CodeRabbit's `<details><summary>Proposed fix</summary>` diff (no surrounding markdown). Used by the fix-then-reply path. |
 | `cr reply   <pr-url> <thread-id> <body>`           | Post a markdown reply on a thread                             |
 | `cr resolve <pr-url> <thread-id>`                  | Mark a thread resolved (idempotent)                           |
 | `cr status  <pr-url> [--plain]`                    | PR state + CodeRabbit activity summary                        |
@@ -254,13 +275,11 @@ A common workflow is to run `coderabbit:autofix` first to land the easy wins, th
 
 ## Roadmap
 
-Known gaps and intentional v1 scoping:
+Known gaps and intentional scoping:
 
-- **Other agent runtimes (Cursor, Codex, Copilot CLI).** The `SKILL.md` is platform-aware (`AskUserQuestion` and `ScheduleWakeup` are documented as Claude Code primitives with fallback notes), but the runtimes' own plugin formats aren't published yet. Manual install + invoking `cr` directly works on any platform with `gh` + `jq`.
-- **v0.2 — skip threads you already handled** in earlier review rounds (`cr threads --since <ref>`). Real PRs hit 3–5 review rounds; after fixing things and pushing, CodeRabbit re-reviews and adds *new* threads on top of the old ones. The `--since` filter will surface only threads created after a given commit or timestamp, so you go through the new feedback without re-visiting threads you've already replied to.
-- **v0.2 — delegate `still-applies` fixes to `coderabbit:autofix`.** The v0.1.13 fix-then-reply loop applies the change with the agent's own editor; v0.2 lets `coderabbit:autofix` apply CodeRabbit's proposed diff verbatim when it's available, then this skill commits and replies. Better fidelity to what CodeRabbit suggested when the diff is high quality.
 - **Polling backoff.** Step 7 polls at a fixed 60s interval up to 5 min. Adaptive backoff (start fast, slow down) is a future improvement.
 - **No auto-created issues.** When the user marks a thread `out-of-scope`, the reply notes it but no Linear/Jira/GitHub issue is created. Users do that themselves; the skill stays narrow.
+- **Other agent runtimes — verification pending.** The skill is structured to work on Copilot CLI, Codex CLI, and Gemini CLI (see [Other agent runtimes](#other-agent-runtimes)), but Claude Code is the only runtime currently end-to-end verified. PRs adding verified-on-X badges welcome.
 
 ---
 

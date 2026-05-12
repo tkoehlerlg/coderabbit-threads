@@ -6,6 +6,29 @@ All notable changes to `coderabbit-threads` are tracked here. The format follows
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-05-12
+
+Multi-round PR support + diff-first fix-then-reply + documented support for other agent runtimes.
+
+### Added
+
+- **`cr threads --since <ref>`.** Drop threads created before `<ref>`. Accepts a commit SHA (resolved via `git show -s --format=%cI`), an ISO-8601 timestamp (passthrough), or a duration suffix `90s` / `30m` / `24h` / `7d` / `1w` (computed as `now − duration`). The filter is applied **after** the `--filter` so e.g. `--filter open --since 24h` keeps only open threads from the last 24 hours. Use case: multi-round PR reviews — after CodeRabbit's second pass, `--since <head-of-previous-push>` returns only the new threads.
+- **`cr proposed-fix <pr-url> <thread-id>` subcommand.** Extracts only the unified-diff content from a `<details><summary>Proposed fix</summary>` (or `Suggested fix`) block in the thread's latest bot comment. Single-purpose: emits the diff to stdout with no surrounding markdown. Exit 1 with a clear stderr message when the thread has no proposed-fix block. Used by Step 6 fix-then-reply to get a clean patch signal without scraping markdown from `cr context --full`.
+- **`has_proposed_fix: bool`** field on `cr threads` normalized output. The Step 4 triage uses this to know in advance which threads have a diff to apply — it appears in the Step 5 categorized summary too.
+- **`created_at`** field on `cr threads` normalized output (the root comment's `createdAt`). Backing field for `--since` filtering.
+- **README "Other agent runtimes" section.** Documents install + invocation for Claude Code (verified), Copilot CLI, Codex CLI, Gemini CLI (all expected-to-work, not yet verified), and bare-`cr` usage. Names what's Claude-Code-only (`AskUserQuestion`, `ScheduleWakeup`, `/coderabbit-threads` slash command) and documents the documented fallbacks for each.
+
+### Changed
+
+- **Step 6 fix-then-reply: diff-first path.** When `has_proposed_fix == true`, the agent prefers `cr proposed-fix` (single call, just the diff) over `cr context --full` (whole conversation) for the still-applies fix-then-reply loop. If `cr proposed-fix` returns a full unified diff (has `--- a/`, `+++ b/`, `@@`), the agent tries `git apply --check`; otherwise it reads the diff as target shape and writes the fix with the Edit tool. The v0.1.13 path (no diff → derive from cited code + AI-prompt section) stays available when `has_proposed_fix == false`.
+- **Step 3 — multi-round shortcut.** SKILL.md Step 3 now documents `--since <ref>` as the canonical way to skip threads already handled in earlier rounds. Three concrete use cases: user just pushed a follow-up commit and wants the next round (`--since <head-of-previous-push>` / `--since 1h`), resumed run after Ctrl-C (`--since <partial-run-start>`), explicit user-named starting point.
+- **Categorized summary line for `still-applies`** now reads `fix-then-reply (auto) / asking you (together) …` — reflecting that auto mode actually fixes the code, not just replies.
+- **README roadmap section** trimmed — `--since`, fix-then-reply, autofix delegation, and other-runtime support all shipped or scoped. Remaining roadmap: adaptive polling backoff, auto-created issues (still narrow-by-design), runtime verification.
+
+### Notes
+
+The original v0.2 design called for delegating `still-applies` fixes to the official `coderabbit:autofix` skill. Research found this isn't possible: `autofix` has no programmatic interface, can't be scoped to a single thread (always processes the whole PR), and explicitly refuses per-thread replies. Claude Code also has no skill-from-skill RPC. Instead, v0.2 ships the equivalent intent inside `coderabbit-threads`: read CodeRabbit's proposed-fix diff via the dedicated `cr proposed-fix` subcommand, then apply it (with `git apply` when it's a full unified diff, or as target-shape guidance when it's inline-suggestion-style).
+
 ## [0.1.13] — 2026-05-12
 
 Bugfix — kill the `Will fix in this PR — fix pending.` placeholder reply.

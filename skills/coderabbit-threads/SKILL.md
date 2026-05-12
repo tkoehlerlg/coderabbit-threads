@@ -2,7 +2,7 @@
 name: coderabbit-threads
 description: Go through a PR's open CodeRabbit review threads, inspect what CodeRabbit wants (including its proposed-fix diffs), and reply per-thread in a conversational loop. Use when handling CodeRabbit feedback across multiple review rounds, when threads need per-thread replies (not a bulk PR summary), when you want to read CodeRabbit's proposed fixes without applying them, when you need to surface CodeRabbit pushback, or when you want to auto-close threads only after CodeRabbit agrees. Distinct from coderabbit:autofix, which applies fixes and posts one summary comment.
 metadata:
-  version: "0.1.13"
+  version: "0.2.0"
   triggers:
     - coderabbit.?threads
     - cr.?threads
@@ -61,12 +61,13 @@ This skill ships with a bash CLI at `bin/cr` that wraps GitHub's GraphQL API. Us
 Subcommands (full signatures in `reference.md`):
 
 ```bash
-cr threads <pr-url> [--filter open|all|unresolved|outdated|pushback]
-cr context <pr-url> <thread-id>
-cr reply   <pr-url> <thread-id> <body>
-cr resolve <pr-url> <thread-id>
-cr status  <pr-url>
-cr check   <pr-url> <thread-id> <our-comment-id>
+cr threads      <pr-url> [--filter open|all|unresolved|outdated|pushback] [--since <ref>]
+cr context      <pr-url> <thread-id> [--full]
+cr proposed-fix <pr-url> <thread-id>
+cr reply        <pr-url> <thread-id> <body>
+cr resolve      <pr-url> <thread-id>
+cr status       <pr-url> [--plain]
+cr check        <pr-url> <thread-id> <our-comment-id>
 ```
 
 At the start of the skill, locate `cr`:
@@ -144,6 +145,33 @@ count=$(jq 'length' <<<"$threads")
 ```
 
 **If `count == 0`:** Inform "No open CodeRabbit threads on PR." EXIT.
+
+#### Multi-round PRs — `--since` to skip already-handled threads
+
+Real PRs hit 3–5 review rounds. After you fix things and push, CodeRabbit re-reviews and adds *new* threads on top of the old ones. The previous round's threads are still in `--filter open` until they're resolved, so a naive run re-walks every prior thread.
+
+When the user says "go through the new feedback" / "the latest CodeRabbit pass" / "what's new since last commit", reach for `--since`:
+
+```bash
+# Threads created after a specific commit (commit's authored date)
+cr threads "$pr_url" --filter open --since 4af1c9d
+
+# Threads created in the last 24 hours
+cr threads "$pr_url" --filter open --since 24h
+
+# Threads created after an explicit ISO timestamp
+cr threads "$pr_url" --filter open --since 2026-05-12T10:00:00Z
+```
+
+`<ref>` accepts: a commit SHA (resolved via `git show -s --format=%cI`), an ISO-8601 timestamp (passes through), or a duration suffix `s` / `m` / `h` / `d` / `w` (e.g. `90s`, `30m`, `24h`, `7d`, `1w`) — computed as `now − duration`.
+
+**When to use it:**
+
+- The user just pushed a follow-up commit and asked to handle CodeRabbit's *next* round → `--since <head-of-previous-push>` or `--since 1h`.
+- A previous skill run was interrupted (Ctrl-C, lost network) and you want to resume on threads that landed after the partial pass → `--since <timestamp of partial run start>`.
+- The user explicitly named a starting point ("only the threads from today", "after the v2 push") → translate to a duration or a commit SHA.
+
+**Don't use it speculatively.** If the user said "handle the threads", run without `--since` — they want the full open set. `--since` is for the multi-round / resumed-run cases above.
 
 ### Step 4 — Triage Each Thread
 
@@ -284,7 +312,7 @@ For each thread in triage order:
 
    `--full` replaces the "What CodeRabbit wants" section with every comment on the thread, oldest first, each labeled with author + timestamp. Same header, same response-section. Re-run on the same thread; no other state changes.
 
-   **CodeRabbit's proposed-fix diff lives in `--full`.** Many CodeRabbit threads include a `<details><summary>Proposed fix</summary>` (or `<summary>💡 Suggested fix</summary>`) block with an actual unified diff showing how CodeRabbit would patch the code. The default `cr context` mode is text-only (it shows the AI-prompt distillation, not the diff). When `cr context` detects a proposed-fix block in the body, it prints a `> [!TIP]` block telling you to escalate. Always reach for `--full` when:
+   **CodeRabbit's proposed-fix diff has its own subcommand: `cr proposed-fix <pr-url> <thread-id>`.** Many CodeRabbit threads include a `<details><summary>Proposed fix</summary>` (or `<summary>💡 Suggested fix</summary>`) block with the changed lines. `cr threads` exposes `has_proposed_fix: true` on those threads so you know in advance; `cr proposed-fix` returns only the diff content (no surrounding conversation). `--full` still works for the whole-conversation read, but for "show me the bot's patch" specifically, prefer `cr proposed-fix` — it's one call instead of scraping markdown. Reach for `--full` when:
    - You're about to apply CodeRabbit's suggestion in code (you need the diff to see what changes verbatim)
    - The thread is `likely-fixed` and you want to verify *what* fix CodeRabbit expected vs. what your commit actually did
    - The user explicitly asked "what does CodeRabbit want me to change here?"
@@ -309,7 +337,7 @@ For each thread in triage order:
    |-----------------|------------------------------------------------------------------|------------------------------------------------------------------------------------------|
    | `likely-fixed`  | Auto-post `Fixed in <sha> by <one-line change>.`                | Same — auto-post `Fixed in <sha> by <one-line change>.`                                  |
    | `out-of-scope`  | Auto-post `Out-of-scope of this PR — should be tracked separately.` | Same — auto-post `Out-of-scope of this PR — should be tracked separately.`               |
-   | `still-applies` | **Ask the user.** Offer: `fix-now (agent picks up the work) / won't-fix <reason> / acknowledged <reason> / out-of-scope / skip`. | **Fix-then-reply.** Read the cited file + CodeRabbit's proposed-fix diff via `cr context --full`, apply the change, commit, then post `Fixed in <sha> by <one-line change>.`. If the agent can't fix autonomously, **escalate to the user — don't post a placeholder reply.** See "Fix-then-reply autonomy criteria" below. |
+   | `still-applies` | **Ask the user.** Offer: `fix-now (agent picks up the work) / won't-fix <reason> / acknowledged <reason> / out-of-scope / skip`. | **Fix-then-reply.** Read the cited file + (if `has_proposed_fix == true`) CodeRabbit's proposed-fix diff via `cr proposed-fix`, apply the change, commit, then post `Fixed in <sha> by <one-line change>.`. If the agent can't fix autonomously, **escalate to the user — don't post a placeholder reply.** See "Fix-then-reply autonomy criteria" below. |
    | `contested`     | **Ask the user with both sides briefly.** See "Don't give in too quickly" below. | **High-confidence disagreement** → auto-post `Won't fix: <one-line technical reason>`. **Low-confidence** → ask with both sides. |
    | `unclear`       | **Ask the user.** Triage was indeterminate; surface both sides if there are any. | **Ask the user.** Same — unclear is by definition beyond the agent's autonomous reach.    |
    | `bot-pushback`  | **Ask the user.** CodeRabbit is mid-conversation; the next reply is theirs to write. | **Ask the user.** Same — bot-pushback always pings, even in auto.                          |
@@ -323,10 +351,17 @@ For each thread in triage order:
    For a `still-applies` thread, the agent picks up the work — no placeholder reply. Concrete loop:
 
    1. Re-read the cited file at the cited line.
-   2. Fetch full context with `cr context "$pr_url" "$thread_id" --full` to surface CodeRabbit's `<details><summary>Proposed fix</summary>` block if present.
+   2. **Check `has_proposed_fix` from Step 3's threads JSON.** If true, fetch only the diff with `cr proposed-fix "$pr_url" "$thread_id"` — that's a single-purpose subcommand that emits the unified diff content from CodeRabbit's `<details><summary>Proposed fix</summary>` block, with no surrounding markdown. Don't reach for `cr context --full` just to get the diff — it pulls the whole conversation.
    3. **Decide if the fix is in autonomous reach** (see criteria below).
-   4. **If yes:** apply the change (your own edit; don't paste the proposed-fix diff verbatim — read it, then write the fix). Commit on the PR's branch with a short message referencing the thread. Post `Fixed in <sha> by <one-line change>.` and move on.
+   4. **If yes — diff-first path:** if `cr proposed-fix` returned a full unified diff (has `--- a/<path>`, `+++ b/<path>`, and `@@` hunk headers), try `git apply --check`. If it applies cleanly, `git apply` and commit. Otherwise — the common case, where CodeRabbit's diff is inline-suggestion-style (changed lines only, no headers) — read the diff as the **target shape** and write the fix with the Edit tool. Commit on the PR's branch with a message in the repo's conventional format (e.g. `bugfix(api): <summary> (CodeRabbit thread)`, trailer `CodeRabbit-thread: <thread-id>`). Post `Fixed in <sha> by <one-line change>.` and move on.
    5. **If no:** escalate. Surface the cited file/line + CodeRabbit's summary + the specific reason this isn't autonomous, and ask the user: `fix-now (you take over) / won't-fix <reason> / acknowledged <reason> / out-of-scope / skip`.
+
+   **When to use `cr proposed-fix` vs writing the fix from scratch:**
+
+   - `has_proposed_fix == true` → call `cr proposed-fix`. The bot's diff is the cleanest signal for what change it wants; treat it as the target shape even when you can't `git apply` it directly. This costs one extra `gh api` call and saves you from re-deriving what the bot already specified.
+   - `has_proposed_fix == false` → there's no diff to read; derive the fix from the cited code + the AI-prompt section in the default `cr context` output. This is the v0.1.13 path; it stays available.
+
+   `cr proposed-fix` exit codes: `0` and prints diff to stdout when a fix exists; `1` with a stderr message when none exists (treat as "no diff, derive yourself"); `2` on auth/network error.
 
    **Fix is in autonomous reach when ALL of these hold:**
 

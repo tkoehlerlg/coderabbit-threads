@@ -9,7 +9,7 @@
     {
       "name": "coderabbit-threads",
       "description": "Go through a PR's open CodeRabbit review threads, triage each one, and reply per-thread — the conversational counterpart to coderabbit:autofix.",
-      "version": "0.1.13",
+      "version": "0.2.0",
       "source": "./",
       "author": {
         "name": "Torben Köhler",
