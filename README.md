@@ -4,7 +4,7 @@
 [![Works with CodeRabbit](https://img.shields.io/badge/CodeRabbit-companion-FF6B35)](https://coderabbit.ai)
 [![Version](https://img.shields.io/github/v/tag/tkoehlerlg/coderabbit-threads?label=version&color=blue)](https://github.com/tkoehlerlg/coderabbit-threads/releases)
 
-**A Claude Code skill that walks every open [CodeRabbit](https://coderabbit.ai) review thread on a PR and replies to each one conversationally.** Your agent triages each thread, fixes what it can and commits, pushes back when CodeRabbit is wrong, asks you only on judgment calls, and resolves only once CodeRabbit agrees.
+**A Claude Code skill that walks every open [CodeRabbit](https://coderabbit.ai) review thread on a PR and replies to each one conversationally.** Your agent triages each thread, fixes what it can and commits, pushes back when CodeRabbit is wrong, asks you only on judgment calls, and resolves only once CodeRabbit agrees. So you stop being the copy-paster between agent and bot.
 
 This is the multi-round conversational counterpart to the official [`coderabbit:autofix`](https://github.com/coderabbitai/skills) skill, which applies proposed diffs and posts one summary comment. Reach for `coderabbit-threads` when you want to acknowledge, push back, or explicitly defer suggestions thread by thread.
 
