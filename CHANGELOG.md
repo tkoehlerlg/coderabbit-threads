@@ -6,6 +6,28 @@ All notable changes to `coderabbit-threads` are tracked here. The format follows
 
 ## [Unreleased]
 
+## [0.1.13] — 2026-05-12
+
+Bugfix — kill the `Will fix in this PR — fix pending.` placeholder reply.
+
+The v0.1.12 auto-mode default for `still-applies` was to auto-post `Will fix in this PR — fix pending.` and move on. That's a promise to fix without a fix landed — noise. Either the skill takes the work, or it gets out of the way. v0.1.13 deletes the placeholder entirely.
+
+### Removed
+
+- **`Will fix in this PR — fix pending.` template.** Was one of the five canonical reply templates — now removed. Four canonical templates remain: `Fixed in <sha>`, `Won't fix`, `Acknowledged — leaving as-is`, `Out-of-scope`.
+
+### Changed
+
+- **`still-applies` in auto mode is now fix-then-reply.** The agent reads the cited file + CodeRabbit's proposed-fix diff (`cr context --full`), applies the change, commits on the PR branch (message format from repo conventions loaded in Step 0, with `CodeRabbit-thread: <thread-id>` trailer), then posts `Fixed in <sha> by <one-line change>.`. No more placeholder replies.
+- **Autonomy criteria for fix-then-reply** documented in SKILL.md Step 6. Agent attempts the fix only when ALL of: (1) single-file, (2) mechanical change, (3) one plausible fix, (4) summarizable in one line. Otherwise escalates to the user with the cited file + CodeRabbit's summary + the specific reason it isn't autonomous.
+- **`still-applies` in together mode** replaces the `will-fix` choice with `fix-now` — same fix-then-reply loop, just user-initiated rather than agent-initiated.
+- **README "What a run looks like"** example updated: Thread 2 (still-applies) now shows the edit + commit + reply sequence in three lines instead of posting a placeholder. Run summary now notes commits pushed during the run.
+- **README roadmap**: v0.2 "fix-then-reply" line removed (shipped here); replaced with "v0.2 — delegate `still-applies` fixes to `coderabbit:autofix`" — the v0.2 design choice now is *how* to fix (agent's editor vs. autofix-applied verbatim diff), not whether to fix at all.
+
+### Why
+
+`Will fix in this PR — fix pending.` was a polite-sounding artifact of skill-as-reply-only thinking. Real review etiquette is binary: either the fix is in the diff (`Fixed in <sha>`), or the suggestion was declined / deferred (`Won't fix` / `Acknowledged` / `Out-of-scope`). A standing IOU on the thread satisfies neither party — CodeRabbit can't resolve, the user has more open threads than they think.
+
 ## [0.1.12] — 2026-05-12
 
 Mode choice up front. The "Go through threads? / Skip all / Cancel" gate at the start of Step 5 was redundant — anyone running the skill already wants to handle threads. Replaced with a more useful choice: *how interactive* should this run feel.

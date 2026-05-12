@@ -17,7 +17,7 @@ PR #142 · ready · last CodeRabbit activity 9m ago
 
   ✅  likely-fixed   1   already addressed in a follow-up commit …   auto-reply "Fixed in <sha>"
   📌  out-of-scope   1   touches another package …                   auto-reply "Out-of-scope"
-  ⚠️   still-applies  1   concern still valid in the cited code …     asking you …
+  ⚠️   still-applies  1   concern still valid in the cited code …     fix-then-reply (auto) / asking you (together) …
   💬  bot-pushback   1   CodeRabbit replied to your last reply …     asking you …
 
 | # | Triage        | Severity | Location                       | One-liner                       |
@@ -47,12 +47,11 @@ Reply: [fixed-in <sha>] [won't-fix <reason>] [out-of-scope] [skip]
 Posted: "Fixed in 4af1c9d by adding await on subscribeAll."
 
 — Thread 2/4 · still-applies · apps/api/src/scheduled.ts:80 ———
-Posted (auto, default for still-applies): "Will fix in this PR — fix pending."
-
-(In v0.1 you write and commit the fix yourself, then re-run the skill —
-the next pass labels this thread `likely-fixed` and posts `Fixed in <sha>`
-autonomously. v0.2 will integrate find/fix/commit/reply in one step;
-see Roadmap.)
+CodeRabbit says:  One failure in the batch aborts the rest — use Promise.allSettled.
+Fix is in autonomous reach (one-file, mechanical, one plausible diff) — applying.
+  ✏️  edited apps/api/src/scheduled.ts (Promise.all → Promise.allSettled)
+  📦  committed 8c2a17e — bugfix(api): use allSettled in scheduled batch (CodeRabbit thread)
+Posted: "Fixed in 8c2a17e by switching the batch from Promise.all to Promise.allSettled."
 
 — Thread 3/4 · likely-fixed · apps/app/src/ui.tsx:88 ——————————
 Posted (auto): "Fixed in 4af1c9d by switching <Button> to semantic markup."
@@ -67,6 +66,7 @@ Polling for CodeRabbit reactions (every 60s, up to 5 min):
   🔁 PRT_d — CodeRabbit pushed back, will surface on next run
 
 Handled 4 threads. Posted 4 replies (3 autonomous, 1 user-chosen).
+1 commit pushed during the run (8c2a17e — still-applies fix).
 2 closed on CodeRabbit agreement; 2 still open.
 ```
 
@@ -87,7 +87,7 @@ Steps 3 and 4 are where this skill lives. It is intentionally narrow:
 - **Wait for CodeRabbit before resolving.** Auto-resolving on reply means CodeRabbit can't push back inline.
 - **Reply factually, not persuasively.** Short statements (`Fixed in <sha>`, `Won't fix: <reason>`) end the conversation. Multi-paragraph defenses invite multi-paragraph pushback.
 - **Don't give in too quickly.** When the agent reads a thread, it evaluates CodeRabbit's *claim*, not just whether the code changed. If CodeRabbit looks technically wrong (claims a missing `await` on a sync call, flags a race condition on a single-writer path), the thread is labelled `contested` — the agent surfaces both sides briefly and asks you to decide, with a pre-filled `Won't fix: <one-line reason>` template ready to send.
-- **Two modes — together, or auto.** At the start of every run, the skill asks one question: do you want to handle threads *together* (pause on every judgment call), or have the agent run on its *own* and only ping you when it truly needs guidance? Auto mode is the default expectation for a 20-thread PR — the agent picks sensible defaults for `still-applies` (`Will fix in this PR`) and posts confident `Won't fix: <one-line technical reason>` on `contested` threads where the agent's disagreement is solid. It still pings you for `unclear`, `bot-pushback`, and low-confidence `contested` — the cases where the call genuinely isn't the agent's to make.
+- **Two modes — together, or auto.** At the start of every run, the skill asks one question: do you want to handle threads *together* (pause on every judgment call), or have the agent run on its *own* and only ping you when it truly needs guidance? In auto mode the agent **fixes `still-applies` threads in code** — reads the cited file + CodeRabbit's proposed-fix diff, applies the change, commits, then posts `Fixed in <sha>`. Confident `Won't fix: <one-line technical reason>` posts on `contested` threads where the agent's disagreement is solid. It still pings you for `unclear`, `bot-pushback`, low-confidence `contested`, and any `still-applies` thread that isn't in single-file mechanical reach — the cases where the call genuinely isn't the agent's to make.
 - **One consent gate for auto-close.** After the mode choice, the skill asks once whether it may auto-resolve threads CodeRabbit agrees with. Closing is the one irreversible action from your perspective, so it gets its own gate.
 - **Sticky approvals.** Every time you say `yes` to a prompt (close this thread, use this reply template), the skill follows up with "use this for the rest of the run?" so a `yes` once becomes the default for the remaining threads — a 20-thread PR doesn't become 20 identical prompts.
 
@@ -107,7 +107,7 @@ The skill follows an 8-step workflow. The full runbook is in [`skills/coderabbit
 | 3 | Check CodeRabbit status  | Bail if PR is merged, closed, draft, or CodeRabbit is still working  |
 | 4 | Triage threads    | Label each open thread: `bot-pushback`, `still-applies`, `likely-fixed`, `unclear`, `out-of-scope` |
 | 5 | Confirm + policy  | Show compact table; ask **together vs auto**; ask self-close policy (auto / ask / never) |
-| 6 | Per-thread loop   | Autonomous for `likely-fixed` / `out-of-scope` (both modes), plus `still-applies` / high-confidence `contested` in **auto** mode; ask user for `unclear` / `bot-pushback` always |
+| 6 | Per-thread loop   | Autonomous for `likely-fixed` / `out-of-scope` (both modes); **fix-then-reply** for `still-applies` in auto mode (or `fix-now` in together mode); high-confidence `contested` posts `Won't fix` autonomously; ask user for `unclear` / `bot-pushback` always |
 | 7 | Poll for reaction | Check whether CodeRabbit agreed with each reply; apply self-close policy on agreement |
 | 8 | Summary           | Terminal-only summary. **No PR-level comment is ever posted.**        |
 
@@ -257,8 +257,8 @@ A common workflow is to run `coderabbit:autofix` first to land the easy wins, th
 Known gaps and intentional v1 scoping:
 
 - **Other agent runtimes (Cursor, Codex, Copilot CLI).** The `SKILL.md` is platform-aware (`AskUserQuestion` and `ScheduleWakeup` are documented as Claude Code primitives with fallback notes), but the runtimes' own plugin formats aren't published yet. Manual install + invoking `cr` directly works on any platform with `gh` + `jq`.
-- **v0.2 — fix-then-reply for `still-applies`.** Today, when you pick `will-fix` on a still-applies thread, you write and commit the fix yourself, then re-run the skill so the next pass labels it `likely-fixed`. v0.2 will integrate the fix step: optionally delegate to `coderabbit:autofix`, or apply CodeRabbit's proposed diff directly, then commit and post `Fixed in <sha>` in one motion.
 - **v0.2 — skip threads you already handled** in earlier review rounds (`cr threads --since <ref>`). Real PRs hit 3–5 review rounds; after fixing things and pushing, CodeRabbit re-reviews and adds *new* threads on top of the old ones. The `--since` filter will surface only threads created after a given commit or timestamp, so you go through the new feedback without re-visiting threads you've already replied to.
+- **v0.2 — delegate `still-applies` fixes to `coderabbit:autofix`.** The v0.1.13 fix-then-reply loop applies the change with the agent's own editor; v0.2 lets `coderabbit:autofix` apply CodeRabbit's proposed diff verbatim when it's available, then this skill commits and replies. Better fidelity to what CodeRabbit suggested when the diff is high quality.
 - **Polling backoff.** Step 7 polls at a fixed 60s interval up to 5 min. Adaptive backoff (start fast, slow down) is a future improvement.
 - **No auto-created issues.** When the user marks a thread `out-of-scope`, the reply notes it but no Linear/Jira/GitHub issue is created. Users do that themselves; the skill stays narrow.
 

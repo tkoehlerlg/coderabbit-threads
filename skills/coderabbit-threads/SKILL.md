@@ -2,7 +2,7 @@
 name: coderabbit-threads
 description: Go through a PR's open CodeRabbit review threads, inspect what CodeRabbit wants (including its proposed-fix diffs), and reply per-thread in a conversational loop. Use when handling CodeRabbit feedback across multiple review rounds, when threads need per-thread replies (not a bulk PR summary), when you want to read CodeRabbit's proposed fixes without applying them, when you need to surface CodeRabbit pushback, or when you want to auto-close threads only after CodeRabbit agrees. Distinct from coderabbit:autofix, which applies fixes and posts one summary comment.
 metadata:
-  version: "0.1.12"
+  version: "0.1.13"
   triggers:
     - coderabbit.?threads
     - cr.?threads
@@ -204,8 +204,8 @@ After triage in Step 4, group the threads by triage label and show one line per 
 
   ✅  likely-fixed    3   already addressed in follow-up commits …    auto-reply "Fixed in <sha>"
   📌  out-of-scope    1   touches code outside this PR …              auto-reply "Out-of-scope"
-  ⚠️   still-applies   2   concern still valid in the cited code …     asking you …
-  ⚔️   contested       1   CodeRabbit's claim looks technically off …  showing both sides, asking you …
+  ⚠️   still-applies   2   concern still valid in the cited code …     fix-then-reply (auto) / asking you (together) …
+  ⚔️   contested       1   CodeRabbit's claim looks technically off …  Won't fix (auto, high-conf) / asking you (together) …
   ❓  unclear         1   couldn't triage from the diff …             asking you …
   💬  bot-pushback    1   CodeRabbit replied to your last reply …     asking you …
 
@@ -246,7 +246,7 @@ Route:
 **The two modes shift where the agent draws the line on autonomy.** Both modes auto-reply for `likely-fixed` and `out-of-scope` — those don't need a human in the loop. The difference is what the agent does on `still-applies` and `contested`:
 
 - **Together:** ask the user on every `still-applies`, `contested`, `unclear`, `bot-pushback`. This is right when the user wants oversight thread-by-thread (small PRs, new team conventions, learning what CodeRabbit flags).
-- **Auto:** default `still-applies` to `Will fix in this PR — fix pending` (the agent commits the user to fixing it); auto-post `Won't fix: <one-line reason>` on `contested` *when the agent's technical disagreement is high-confidence*; still ask on `unclear`, `bot-pushback`, and low-confidence `contested`. This is right for the common case — the user installed the skill to handle threads, not to vote on each one.
+- **Auto:** **actually fix `still-applies` threads in code** — read the cited file + CodeRabbit's proposed-fix diff (`cr context --full`), apply the change, commit, then post `Fixed in <sha> by <one-line change>.`. Auto-post `Won't fix: <one-line reason>` on `contested` *when the agent's technical disagreement is high-confidence*. Still ask on `unclear`, `bot-pushback`, and low-confidence `contested`. **No placeholder replies** — `still-applies` either gets a real fix-then-reply, or it escalates to the user. The user installed the skill to handle threads, not to vote on each one *or* to receive empty "Will fix" promises.
 
 **Bot-pushback always pings, even in auto.** CodeRabbit replied to the user's previous reply; the next response is theirs to write.
 
@@ -309,7 +309,7 @@ For each thread in triage order:
    |-----------------|------------------------------------------------------------------|------------------------------------------------------------------------------------------|
    | `likely-fixed`  | Auto-post `Fixed in <sha> by <one-line change>.`                | Same — auto-post `Fixed in <sha> by <one-line change>.`                                  |
    | `out-of-scope`  | Auto-post `Out-of-scope of this PR — should be tracked separately.` | Same — auto-post `Out-of-scope of this PR — should be tracked separately.`               |
-   | `still-applies` | **Ask the user.** Offer: `Will fix / Won't fix / Acknowledged / Out-of-scope / skip`. | **Auto-post `Will fix in this PR — fix pending.`** — the user delegated; the safest default is to commit to the fix. |
+   | `still-applies` | **Ask the user.** Offer: `fix-now (agent picks up the work) / won't-fix <reason> / acknowledged <reason> / out-of-scope / skip`. | **Fix-then-reply.** Read the cited file + CodeRabbit's proposed-fix diff via `cr context --full`, apply the change, commit, then post `Fixed in <sha> by <one-line change>.`. If the agent can't fix autonomously, **escalate to the user — don't post a placeholder reply.** See "Fix-then-reply autonomy criteria" below. |
    | `contested`     | **Ask the user with both sides briefly.** See "Don't give in too quickly" below. | **High-confidence disagreement** → auto-post `Won't fix: <one-line technical reason>`. **Low-confidence** → ask with both sides. |
    | `unclear`       | **Ask the user.** Triage was indeterminate; surface both sides if there are any. | **Ask the user.** Same — unclear is by definition beyond the agent's autonomous reach.    |
    | `bot-pushback`  | **Ask the user.** CodeRabbit is mid-conversation; the next reply is theirs to write. | **Ask the user.** Same — bot-pushback always pings, even in auto.                          |
@@ -317,6 +317,29 @@ For each thread in triage order:
    **What "high-confidence" means for auto-`contested`:** the agent has a *specific, citable* technical reason (a line number where the inverse is true, a function signature that contradicts the bot's claim, a single-writer invariant the bot ignored). If the disagreement reduces to "feels off" or "I think the bot is wrong", that's not high-confidence — ask the user.
 
    **For `likely-fixed`:** Find the commit SHA that addressed the issue (use `git log --since=<thread-created-at> -- <cited-file>` and pick the most plausible recent commit).
+
+   #### Fix-then-reply autonomy criteria (`still-applies`)
+
+   For a `still-applies` thread, the agent picks up the work — no placeholder reply. Concrete loop:
+
+   1. Re-read the cited file at the cited line.
+   2. Fetch full context with `cr context "$pr_url" "$thread_id" --full` to surface CodeRabbit's `<details><summary>Proposed fix</summary>` block if present.
+   3. **Decide if the fix is in autonomous reach** (see criteria below).
+   4. **If yes:** apply the change (your own edit; don't paste the proposed-fix diff verbatim — read it, then write the fix). Commit on the PR's branch with a short message referencing the thread. Post `Fixed in <sha> by <one-line change>.` and move on.
+   5. **If no:** escalate. Surface the cited file/line + CodeRabbit's summary + the specific reason this isn't autonomous, and ask the user: `fix-now (you take over) / won't-fix <reason> / acknowledged <reason> / out-of-scope / skip`.
+
+   **Fix is in autonomous reach when ALL of these hold:**
+
+   - The fix is confined to **the cited file** (no cross-file refactor, no API surface change).
+   - The change is **mechanical** (add `await`, change one-line condition, rename a single identifier inside the file, swap one call for another). Not a design decision.
+   - There is **one plausible fix**, not a choice between two equally-valid approaches.
+   - The agent can summarize the fix in **one line** for the reply (`by adding await on subscribeAll`, `by inverting the org-id check`).
+
+   If any of the four fails → escalate. "Could I write this code?" is the wrong question; "is this so obvious that no reasonable reviewer would expect to weigh in?" is the right one.
+
+   **What goes in the commit:** one logical change, message format `<prefix>(<scope>): <subject>` per the repo's convention loaded in Step 0 (e.g. `bugfix(api): add await on subscribeAll (CodeRabbit thread)`). Include a trailer `CodeRabbit-thread: <thread-id>` so the link is greppable.
+
+   **What does NOT count as autonomous-reach:** anything that touches a public API surface, anything where the fix would require a follow-up test change, anything CodeRabbit flagged as `critical` severity, and anything where the cited line is part of generated code or a migration file.
 
    #### Don't give in too quickly — show both sides briefly
 
@@ -330,7 +353,7 @@ For each thread in triage order:
 
    Pick:
      [won't-fix]  Won't fix: notify is synchronous; no await needed.
-     [will-fix]   Will fix in this PR — fix pending.
+     [fix-now]    Agent picks up the work, commits the fix, then posts "Fixed in <sha>".
      [skip]       Leave the thread open; don't reply this run.
      [other]      Write a custom reply.
    ```
@@ -344,16 +367,16 @@ For each thread in triage order:
 
    When the agent's disagreement is **very high confidence** (e.g., CodeRabbit is citing a function that doesn't exist on that line, or repeating a finding already addressed in an unrelated commit), it's still safer to surface to the user with both sides than to autonomous-`Won't fix`. Bot-claim evaluation is genuinely a judgment call.
 
-   **Reply templates** (used both for autonomous replies and as shortcuts when the user is asked):
+   **Reply templates** — four canonical templates. There is intentionally no `Will fix in this PR — fix pending.` placeholder: a promise to fix without a fix landed is noise. Either the fix is committed (`Fixed in <sha>`), or the thread is declined / deferred / left for the user.
+
    ```
-   Fixed in <sha> by <one-line change>.            (a fix is already in the diff)
-   Will fix in this PR — fix pending.              (no fix yet, but committing to one)
+   Fixed in <sha> by <one-line change>.            (a fix landed — autonomous still-applies or post-fix likely-fixed)
    Won't fix: <one-line reason>.                   (declining to act on the suggestion)
    Acknowledged — leaving as-is per <one-line reason>.   (intentional non-action)
    Out-of-scope of this PR — should be tracked separately.
    ```
 
-   The two `Acknowledged`/`Will fix` distinctions matter: `Will fix` is a commitment that something is coming; `Acknowledged — leaving as-is` is a decision not to act. Don't conflate them.
+   `Acknowledged — leaving as-is` is a decision not to act, with a stated reason. Use it when CodeRabbit's claim is technically valid but the team has decided not to act in this PR; don't conflate with `Won't fix` (which signals the suggestion itself was rejected).
 
    **Steer away from** (applies to both autonomous and user-typed replies):
    - Multi-paragraph defenses of the original code
@@ -472,11 +495,10 @@ If the user agrees, store the choice and skip the prompt for every subsequent oc
 
 ## Reply Templates
 
-Five canonical templates. Each carries a distinct intent — don't merge or paraphrase:
+Four canonical templates. Each carries a distinct intent — don't merge or paraphrase. There is no `Will fix in this PR — fix pending.` placeholder: a promise without a fix is noise. `still-applies` threads either get a real fix-then-reply (Step 6, auto mode or `fix-now` in together mode), or they get one of the other three responses.
 
 ```
-Fixed in <sha> by <one-line change>.                    (fix already landed)
-Will fix in this PR — fix pending.                      (commitment, no fix yet)
+Fixed in <sha> by <one-line change>.                    (fix landed)
 Won't fix: <one-line reason>.                           (declining to act)
 Acknowledged — leaving as-is per <one-line reason>.     (intentional non-action)
 Out-of-scope of this PR — should be tracked separately. (deferring to a separate change)
