@@ -4,7 +4,7 @@ argument-hint: "[pr-number-or-url]"
 allowed-tools: "Bash(gh:*), Bash(cr:*), Bash(git:*)"
 ---
 
-# CodeRabbit Threads — Walk-Through
+# CodeRabbit Threads — Review
 
 Use the `coderabbit-threads` skill against the right PR. Pick the PR from the user's
 argument when given; otherwise auto-detect from the current branch; otherwise ask.
@@ -57,6 +57,6 @@ Do not duplicate the skill's workflow inline. Your job in this command is only t
 
 ### Quick reference for the user
 
-- `/coderabbit-threads:walk` — use the PR for the current branch
-- `/coderabbit-threads:walk 142` — explicit PR number on this repo
-- `/coderabbit-threads:walk https://github.com/owner/repo/pull/142` — explicit URL (works in any working directory)
+- `/coderabbit-threads:review` — use the PR for the current branch
+- `/coderabbit-threads:review 142` — explicit PR number on this repo
+- `/coderabbit-threads:review https://github.com/owner/repo/pull/142` — explicit URL (works in any working directory)

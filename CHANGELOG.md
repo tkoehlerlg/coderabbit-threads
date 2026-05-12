@@ -6,6 +6,12 @@ All notable changes to `coderabbit-threads` are tracked here. The format follows
 
 ## [Unreleased]
 
+## [0.1.4] — 2026-05-12
+
+### Changed
+
+- **Slash command renamed: `/coderabbit-threads:walk` → `/coderabbit-threads:review`.** The `review` verb matches how users actually think about CodeRabbit feedback ("let me review the threads") and is more discoverable than the SKILL.md internal "walk-through" jargon. The command's behaviour is unchanged — it still resolves the PR (from argument, current branch, or by asking), then invokes the skill.
+
 ## [0.1.3] — 2026-05-12
 
 Slash-command entry point.

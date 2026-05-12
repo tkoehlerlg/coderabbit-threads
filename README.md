@@ -153,12 +153,12 @@ Then in a Claude Code session:
 Or use the bundled slash command:
 
 ```text
-/coderabbit-threads:walk                                       # current-branch PR
-/coderabbit-threads:walk 142                                   # explicit PR number on this repo
-/coderabbit-threads:walk https://github.com/owner/repo/pull/14 # explicit URL
+/coderabbit-threads:review                                       # current-branch PR
+/coderabbit-threads:review 142                                   # explicit PR number on this repo
+/coderabbit-threads:review https://github.com/owner/repo/pull/14 # explicit URL
 ```
 
-If the current branch has no PR, the command lists recent open PRs and asks which one to walk — it never silently guesses.
+If the current branch has no PR, the command lists recent open PRs and asks which one to review — it never silently guesses.
 
 ### Requirements
 
