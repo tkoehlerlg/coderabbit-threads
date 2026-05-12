@@ -76,60 +76,6 @@ Handled 4 threads. Posted 4 replies (3 autonomous, 1 user-chosen).
 
 ---
 
-## Why it exists
-
-**TL;DR.**
-
-- A 20-thread CodeRabbit review eats an hour of human time even when most of the threads are mechanical or already addressed.
-- The skill walks each thread, replies factually (`Fixed in <sha>`, `Won't fix: <reason>`, `Out-of-scope`), and waits for CodeRabbit to react before resolving.
-- In **auto** mode it actually fixes `still-applies` threads in code, commits, and replies. No placeholder "Will fix" promises.
-- It **pushes back** when CodeRabbit is technically wrong (`contested`) instead of folding.
-- It **asks you only** on the genuine judgment calls (`unclear`, `bot-pushback`, low-confidence `contested`).
-- It detects when CodeRabbit has been paused on a PR and lets you resume, run a one-time review, or skip straight to existing threads.
-
-**The friction point this fixes.** Most coding agents don't push back on CodeRabbit themselves. They apply whatever it suggests or punt the decision back to you, which turns *you* into the copy-paster between bot and code: evaluating each claim, dictating each reply, then pasting it back. You're a developer, not a relay. `coderabbit-threads` evaluates CodeRabbit's claims the way you would, fixes what's worth fixing, and pushes back when the bot is wrong, so you only weigh in on the genuine judgment calls.
-
-CodeRabbit reads a PR, posts a review with N threads (sometimes 20+), and then waits. The typical human flow is:
-
-1. Scan all threads, decide which are worth acting on.
-2. Fix the worthwhile ones in code.
-3. Reply on each thread explaining what happened (`Fixed in <sha>`, `Won't fix because <reason>`, `Out of scope`).
-4. Wait for CodeRabbit to react and resolve threads it agrees with.
-
-Steps 3 and 4 are where this skill lives. It is intentionally narrow:
-
-- **Per-thread replies, not a bulk PR comment.** Resolving a thread means reacting to *that* thread. A PR-level summary comment doesn't move state.
-- **Wait for CodeRabbit before resolving.** Auto-resolving on reply means CodeRabbit can't push back inline.
-- **Reply factually, not persuasively.** Short statements (`Fixed in <sha>`, `Won't fix: <reason>`) end the conversation. Multi-paragraph defenses invite multi-paragraph pushback.
-- **Don't give in too quickly.** When the agent reads a thread, it evaluates CodeRabbit's *claim*, not just whether the code changed. If CodeRabbit looks technically wrong (claims a missing `await` on a sync call, flags a race condition on a single-writer path), the thread gets labelled `contested`. The agent then surfaces both sides briefly and asks you to decide, with a pre-filled `Won't fix: <one-line reason>` template ready to send.
-- **Two modes: together or auto.** Every run starts with one question. Do you want to handle threads *together*, pausing on every judgment call? Or have the agent run on its own and ping you only when it truly needs guidance? In auto mode the agent **fixes `still-applies` threads in code**. It reads the cited file plus CodeRabbit's proposed-fix diff, applies the change, commits, and posts `Fixed in <sha>`. On `contested` threads where the disagreement is solid, it posts a confident `Won't fix: <one-line technical reason>`. It still pings you on `unclear`, `bot-pushback`, low-confidence `contested`, and any `still-applies` thread that doesn't fit single-file mechanical reach. Those are the cases where the call genuinely isn't the agent's to make.
-- **One consent gate for auto-close.** After the mode choice, the skill asks once whether it may auto-resolve threads CodeRabbit agrees with. Closing is the one irreversible action from your perspective, so it gets its own gate.
-- **Sticky approvals.** Every time you say `yes` to a prompt (close this thread, use this reply template), the skill follows up with "use this for the rest of the run?". One `yes` then becomes the default for every remaining thread, so a 20-thread PR doesn't turn into 20 identical prompts.
-
-Distinct from `coderabbit:autofix`. That skill applies code changes from CodeRabbit's suggested diffs and posts one summary comment. The two compose: run `autofix` to apply, then `coderabbit-threads` to converse.
-
----
-
-## How it works
-
-The skill follows an 8-step workflow. The full runbook is in [`skills/coderabbit-threads/SKILL.md`](skills/coderabbit-threads/SKILL.md); condensed:
-
-| # | Step              | Purpose                                                              |
-|---|-------------------|----------------------------------------------------------------------|
-| 0 | Load conventions  | Read repo `AGENTS.md` / `CLAUDE.md` for commit / issue-tracker style |
-| 1 | Verify push state | Warn on uncommitted or unpushed work CodeRabbit hasn't reviewed         |
-| 2 | Resolve PR        | Find the current branch's PR, or offer to create one                 |
-| 3 | Check CodeRabbit status  | Bail if PR is merged, closed, draft, or CodeRabbit is still working  |
-| 4 | Triage threads    | Label each open thread: `bot-pushback`, `still-applies`, `likely-fixed`, `unclear`, `out-of-scope` |
-| 5 | Confirm + policy  | Show compact table; ask **together vs auto**; ask self-close policy (auto / ask / never) |
-| 6 | Per-thread loop   | Autonomous for `likely-fixed` / `out-of-scope` (both modes); **fix-then-reply** for `still-applies` in auto mode (or `fix-now` in together mode); high-confidence `contested` posts `Won't fix` autonomously; ask user for `unclear` / `bot-pushback` always |
-| 7 | Poll for reaction | Check whether CodeRabbit agreed with each reply; apply self-close policy on agreement |
-| 8 | Summary           | Terminal-only summary. **No PR-level comment is ever posted.**        |
-
-All GitHub API interaction goes through the bundled `cr` CLI. The skill never constructs raw GraphQL inline.
-
----
-
 ## Installation
 
 ### Via Claude Code plugin marketplace
@@ -211,6 +157,60 @@ The triage logic, the `MODE` (together/auto) gate, the `RESOLVE_POLICY` gate, st
 - An open PR on the current branch with at least one CodeRabbit review thread
 
 No tokens, no extra config. `cr` uses whatever `gh auth login` configured.
+
+---
+
+## How it works
+
+The skill follows an 8-step workflow. The full runbook is in [`skills/coderabbit-threads/SKILL.md`](skills/coderabbit-threads/SKILL.md); condensed:
+
+| # | Step              | Purpose                                                              |
+|---|-------------------|----------------------------------------------------------------------|
+| 0 | Load conventions  | Read repo `AGENTS.md` / `CLAUDE.md` for commit / issue-tracker style |
+| 1 | Verify push state | Warn on uncommitted or unpushed work CodeRabbit hasn't reviewed         |
+| 2 | Resolve PR        | Find the current branch's PR, or offer to create one                 |
+| 3 | Check CodeRabbit status  | Bail if PR is merged, closed, draft, or CodeRabbit is still working  |
+| 4 | Triage threads    | Label each open thread: `bot-pushback`, `still-applies`, `likely-fixed`, `unclear`, `out-of-scope` |
+| 5 | Confirm + policy  | Show compact table; ask **together vs auto**; ask self-close policy (auto / ask / never) |
+| 6 | Per-thread loop   | Autonomous for `likely-fixed` / `out-of-scope` (both modes); **fix-then-reply** for `still-applies` in auto mode (or `fix-now` in together mode); high-confidence `contested` posts `Won't fix` autonomously; ask user for `unclear` / `bot-pushback` always |
+| 7 | Poll for reaction | Check whether CodeRabbit agreed with each reply; apply self-close policy on agreement |
+| 8 | Summary           | Terminal-only summary. **No PR-level comment is ever posted.**        |
+
+All GitHub API interaction goes through the bundled `cr` CLI. The skill never constructs raw GraphQL inline.
+
+---
+
+## Why it exists
+
+**TL;DR.**
+
+- A 20-thread CodeRabbit review eats an hour of human time even when most of the threads are mechanical or already addressed.
+- The skill walks each thread, replies factually (`Fixed in <sha>`, `Won't fix: <reason>`, `Out-of-scope`), and waits for CodeRabbit to react before resolving.
+- In **auto** mode it actually fixes `still-applies` threads in code, commits, and replies. No placeholder "Will fix" promises.
+- It **pushes back** when CodeRabbit is technically wrong (`contested`) instead of folding.
+- It **asks you only** on the genuine judgment calls (`unclear`, `bot-pushback`, low-confidence `contested`).
+- It detects when CodeRabbit has been paused on a PR and lets you resume, run a one-time review, or skip straight to existing threads.
+
+**The friction point this fixes.** Most coding agents don't push back on CodeRabbit themselves. They apply whatever it suggests or punt the decision back to you, which turns *you* into the copy-paster between bot and code: evaluating each claim, dictating each reply, then pasting it back. You're a developer, not a relay. `coderabbit-threads` evaluates CodeRabbit's claims the way you would, fixes what's worth fixing, and pushes back when the bot is wrong, so you only weigh in on the genuine judgment calls.
+
+CodeRabbit reads a PR, posts a review with N threads (sometimes 20+), and then waits. The typical human flow is:
+
+1. Scan all threads, decide which are worth acting on.
+2. Fix the worthwhile ones in code.
+3. Reply on each thread explaining what happened (`Fixed in <sha>`, `Won't fix because <reason>`, `Out of scope`).
+4. Wait for CodeRabbit to react and resolve threads it agrees with.
+
+Steps 3 and 4 are where this skill lives. It is intentionally narrow:
+
+- **Per-thread replies, not a bulk PR comment.** Resolving a thread means reacting to *that* thread. A PR-level summary comment doesn't move state.
+- **Wait for CodeRabbit before resolving.** Auto-resolving on reply means CodeRabbit can't push back inline.
+- **Reply factually, not persuasively.** Short statements (`Fixed in <sha>`, `Won't fix: <reason>`) end the conversation. Multi-paragraph defenses invite multi-paragraph pushback.
+- **Don't give in too quickly.** When the agent reads a thread, it evaluates CodeRabbit's *claim*, not just whether the code changed. If CodeRabbit looks technically wrong (claims a missing `await` on a sync call, flags a race condition on a single-writer path), the thread gets labelled `contested`. The agent then surfaces both sides briefly and asks you to decide, with a pre-filled `Won't fix: <one-line reason>` template ready to send.
+- **Two modes: together or auto.** Every run starts with one question. Do you want to handle threads *together*, pausing on every judgment call? Or have the agent run on its own and ping you only when it truly needs guidance? In auto mode the agent **fixes `still-applies` threads in code**. It reads the cited file plus CodeRabbit's proposed-fix diff, applies the change, commits, and posts `Fixed in <sha>`. On `contested` threads where the disagreement is solid, it posts a confident `Won't fix: <one-line technical reason>`. It still pings you on `unclear`, `bot-pushback`, low-confidence `contested`, and any `still-applies` thread that doesn't fit single-file mechanical reach. Those are the cases where the call genuinely isn't the agent's to make.
+- **One consent gate for auto-close.** After the mode choice, the skill asks once whether it may auto-resolve threads CodeRabbit agrees with. Closing is the one irreversible action from your perspective, so it gets its own gate.
+- **Sticky approvals.** Every time you say `yes` to a prompt (close this thread, use this reply template), the skill follows up with "use this for the rest of the run?". One `yes` then becomes the default for every remaining thread, so a 20-thread PR doesn't turn into 20 identical prompts.
+
+Distinct from `coderabbit:autofix`. That skill applies code changes from CodeRabbit's suggested diffs and posts one summary comment. The two compose: run `autofix` to apply, then `coderabbit-threads` to converse.
 
 ---
 
