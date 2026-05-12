@@ -6,6 +6,17 @@ All notable changes to `coderabbit-threads` are tracked here. The format follows
 
 ## [Unreleased]
 
+## [0.1.3] — 2026-05-12
+
+Slash-command entry point.
+
+### Added
+
+- **`commands/walk.md` — `/coderabbit-threads:walk` slash command.** A one-line entry point that resolves the PR (from the user's argument, the current branch's PR, or by asking) and then invokes the `coderabbit-threads` skill against it. Surfaces recent open PRs when the current branch has none, so the user picks consciously instead of the command silently guessing. Accepts:
+  - `/coderabbit-threads:walk` — PR for the current branch
+  - `/coderabbit-threads:walk 142` — explicit number on the current repo
+  - `/coderabbit-threads:walk https://github.com/owner/repo/pull/142` — explicit URL (works from any directory)
+
 ## [0.1.2] — 2026-05-12
 
 Agent-awareness round: make the skill easier to discover and tell the agent

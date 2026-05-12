@@ -150,6 +150,16 @@ Then in a Claude Code session:
 
 > Walk through the open CodeRabbit threads on this PR.
 
+Or use the bundled slash command:
+
+```text
+/coderabbit-threads:walk                                       # current-branch PR
+/coderabbit-threads:walk 142                                   # explicit PR number on this repo
+/coderabbit-threads:walk https://github.com/owner/repo/pull/14 # explicit URL
+```
+
+If the current branch has no PR, the command lists recent open PRs and asks which one to walk — it never silently guesses.
+
 ### Requirements
 
 - [`gh`](https://cli.github.com/) (GitHub CLI), authenticated: `gh auth status` must succeed
