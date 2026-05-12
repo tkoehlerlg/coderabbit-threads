@@ -6,6 +6,22 @@ All notable changes to `coderabbit-threads` are tracked here. The format follows
 
 ## [Unreleased]
 
+## [0.1.1] — 2026-05-12
+
+Post-release polish from a retrospective review of the user's past
+CodeRabbit interactions. No CLI or workflow changes; documentation only.
+
+### Fixed
+
+- **Template contradiction.** `Acknowledged — will fix in this PR` and `Acknowledged — leaving as-is` previously appeared with the same prefix but opposite intents. Split into five distinct templates (`Fixed in <sha>`, `Will fix in this PR`, `Won't fix`, `Acknowledged — leaving as-is`, `Out-of-scope`) in both SKILL.md and the README.
+- **README "What a run looks like" snippet** previously implied the agent already knows the fix SHA for `still-applies` threads. Updated to show the actual v0.1 flow (commit the fix yourself, re-run; the next pass labels it `likely-fixed` and posts `Fixed in <sha>` autonomously) and link to the v0.2 plan.
+
+### Documented
+
+- **v0.2 roadmap items** in the README:
+  - Fix-then-reply for `still-applies` (delegate to `coderabbit:autofix` or apply the bot's diff, then commit + reply in one motion).
+  - `cr threads --since <ref>` for skipping threads already handled in earlier review rounds.
+
 ## [0.1.0] — 2026-05-12
 
 Initial release.

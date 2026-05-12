@@ -234,17 +234,20 @@ For each thread in triage order:
    |-----------------|-----------------------------------------------------------------------------------------------------------------|
    | `likely-fixed`  | Find the commit SHA that addressed the issue (use `git log --since=<thread-created-at> -- <cited-file>` and pick the most plausible recent commit). Post: `Fixed in <sha> by <one-line change>.` — autonomous, no prompt. |
    | `out-of-scope`  | Post the out-of-scope template autonomously: `Out-of-scope of this PR — should be tracked separately.`           |
-   | `still-applies` | **Ask the user**. The right reply depends on whether the user wants to fix it now, defer, or push back — that's a judgment call this skill won't make. Offer: `Acknowledged — will fix in this PR / Won't fix: <reason> / Out-of-scope / skip`. |
+   | `still-applies` | **Ask the user**. The right reply depends on whether the user wants to fix it now, defer, or push back — that's a judgment call this skill won't make. Offer: `Will fix in this PR / Won't fix: <reason> / Acknowledged — leaving as-is / Out-of-scope / skip`. |
    | `unclear`       | **Ask the user**. Triage was indeterminate; let them pick. |
    | `bot-pushback`  | **Ask the user**. The bot is mid-conversation with them; the next reply is theirs to write. Show the bot's latest comment verbatim and prompt for free-form text or one of the templates below. |
 
    **Reply templates** (used both for autonomous replies and as shortcuts when the user is asked):
    ```
-   Fixed in <sha> by <one-line change>.
-   Won't fix: <one-line reason>.
+   Fixed in <sha> by <one-line change>.            (a fix is already in the diff)
+   Will fix in this PR — fix pending.              (no fix yet, but committing to one)
+   Won't fix: <one-line reason>.                   (declining to act on the suggestion)
+   Acknowledged — leaving as-is per <one-line reason>.   (intentional non-action)
    Out-of-scope of this PR — should be tracked separately.
-   Acknowledged — leaving as-is per <one-line reason>.
    ```
+
+   The two `Acknowledged`/`Will fix` distinctions matter: `Will fix` is a commitment that something is coming; `Acknowledged — leaving as-is` is a decision not to act. Don't conflate them.
 
    **Steer away from** (applies to both autonomous and user-typed replies):
    - Multi-paragraph defenses of the original code
@@ -361,11 +364,14 @@ If the user agrees, store the choice and skip the prompt for every subsequent oc
 
 ## Reply Templates
 
+Five canonical templates. Each carries a distinct intent — don't merge or paraphrase:
+
 ```
-Fixed in <sha> by <one-line change>.
-Won't fix: <one-line reason>.
-Out-of-scope of this PR — should be tracked separately.
-Acknowledged — leaving as-is per <one-line reason>.
+Fixed in <sha> by <one-line change>.                    (fix already landed)
+Will fix in this PR — fix pending.                      (commitment, no fix yet)
+Won't fix: <one-line reason>.                           (declining to act)
+Acknowledged — leaving as-is per <one-line reason>.     (intentional non-action)
+Out-of-scope of this PR — should be tracked separately. (deferring to a separate change)
 ```
 
 ## Security Rules

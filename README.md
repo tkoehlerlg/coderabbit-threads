@@ -38,9 +38,14 @@ Posted: "Fixed in 4af1c9d by adding await on subscribeAll."
 
 — Thread 2/4 · still-applies · apps/api/src/scheduled.ts:80 ———
 (judgment call — asking you)
-Reply: [acknowledged] [won't-fix <reason>] [out-of-scope] [skip]
-> acknowledged
-Posted: "Acknowledged — leaving as-is per: load is bounded at 10."
+Reply: [will-fix] [won't-fix <reason>] [acknowledged <reason>] [out-of-scope] [skip]
+> will-fix
+Posted: "Will fix in this PR — fix pending."
+
+(In v0.1 you write and commit the fix yourself, then re-run the skill —
+the next pass labels this thread `likely-fixed` and posts `Fixed in <sha>`
+autonomously. v0.2 will integrate find/fix/commit/reply in one step;
+see Roadmap.)
 
 Use "acknowledged" for the remaining 0 still-applies threads in this run?
 > n/a
@@ -234,6 +239,8 @@ A common workflow is to run `coderabbit:autofix` first to land the easy wins, th
 Known gaps and intentional v1 scoping:
 
 - **Other agent runtimes (Cursor, Codex, Copilot CLI).** The `SKILL.md` is platform-aware (`AskUserQuestion` and `ScheduleWakeup` are documented as Claude Code primitives with fallback notes), but the runtimes' own plugin formats aren't published yet. Manual install + invoking `cr` directly works on any platform with `gh` + `jq`.
+- **v0.2 — fix-then-reply for `still-applies`.** Today, when you pick `will-fix` on a still-applies thread, you write and commit the fix yourself, then re-run the skill so the next pass labels it `likely-fixed`. v0.2 will integrate the fix step: optionally delegate to `coderabbit:autofix`, or apply the bot's proposed diff directly, then commit and post `Fixed in <sha>` in one motion.
+- **v0.2 — `cr threads --since <ref>`.** Real PRs hit 3–5 review rounds. A `--since` filter surfacing only threads created after a given commit/timestamp would skip the redundant walk-through of threads you already handled.
 - **`resolved`-label precedence.** Already handled in `cr` — closed threads never surface as `bot-pushback` even if timestamp ordering would suggest it. This rule lives in [`reference.md` § Computed `label` values](skills/coderabbit-threads/reference.md#computed-label-values).
 - **Polling backoff.** Step 7 polls at a fixed 60s interval up to 5 min. Adaptive backoff (start fast, slow down) is a future improvement.
 - **No auto-created issues.** When the user marks a thread `out-of-scope`, the reply notes it but no Linear/Jira/GitHub issue is created. Users do that themselves; the skill stays narrow.
