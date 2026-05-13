@@ -19,6 +19,8 @@
 
 set -euo pipefail
 
+CR_VERSION="0.6.0"
+
 # --- helpers ---------------------------------------------------------------
 
 die() { echo "cr: $*" >&2; exit 1; }
@@ -328,6 +330,7 @@ cmd_threads() {
   local pr_url="" filter="open" since_ref=""
   while [ $# -gt 0 ]; do
     case "$1" in
+      -h|--help) echo "usage: cr threads <pr-url> [--filter open|all|unresolved|outdated|pushback|actionable] [--since <ref>]"; exit 0 ;;
       --filter) filter="${2:-}"; shift 2 ;;
       --filter=*) filter="${1#--filter=}"; shift ;;
       --since) since_ref="${2:-}"; shift 2 ;;
@@ -354,6 +357,7 @@ cmd_threads() {
 }
 
 cmd_reply() {
+  case "${1:-}" in -h|--help) echo "usage: cr reply <pr-url> <thread-id> <body>"; exit 0 ;; esac
   local pr_url="${1:-}" thread_id="${2:-}" body="${3:-}"
   [ -z "$pr_url" ] || [ -z "$thread_id" ] || [ -z "$body" ] && \
     die "usage: cr reply <pr-url> <thread-id> <body>"
@@ -371,7 +375,61 @@ cmd_reply() {
   }' <<<"$response" || api_die "unexpected reply response shape"
 }
 
+# Fan-out: post one body to N threads in a single call.
+# Output: JSON array. Each element is {thread_id, comment_id, created_at} on success
+# or {thread_id, error: <string>} on failure. Exit 0 if all succeeded, 2 if any failed.
+# Typical use: a single mechanical-fix commit closed N issues; reply "Fixed in <sha> by …" to all.
+cmd_reply_many() {
+  local pr_url="" body=""
+  local -a thread_ids=()
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -h|--help) echo "usage: cr reply-many <pr-url> --body <body> <thread-id> [<thread-id>...]"; exit 0 ;;
+      --body) body="${2:-}"; shift 2 ;;
+      --body=*) body="${1#--body=}"; shift ;;
+      --*) die "unknown flag: $1" ;;
+      *)
+        if [ -z "$pr_url" ]; then pr_url="$1"
+        else thread_ids+=("$1")
+        fi
+        shift ;;
+    esac
+  done
+  [ -z "$pr_url" ] && die "usage: cr reply-many <pr-url> --body <body> <thread-id> [<thread-id>...]"
+  [ -z "$body" ] && die "cr reply-many: --body is required"
+  [ "${#thread_ids[@]}" -eq 0 ] && die "cr reply-many: at least one <thread-id> is required"
+  parse_pr_url "$pr_url"
+
+  local any_failed=0
+  local results="[]"
+  local tid response entry
+  for tid in "${thread_ids[@]}"; do
+    set +e
+    response=$(gh api graphql -f threadId="$tid" -f body="$body" \
+      -f query='mutation($threadId:ID!,$body:String!){
+        addPullRequestReviewThreadReply(input:{pullRequestReviewThreadId:$threadId, body:$body}){
+          comment{databaseId createdAt}
+        }
+      }' 2>/dev/null)
+    local rc=$?
+    set -e
+    if [ $rc -ne 0 ] || ! entry=$(jq -e -c --arg tid "$tid" '{
+      thread_id: $tid,
+      comment_id: .data.addPullRequestReviewThreadReply.comment.databaseId,
+      created_at: .data.addPullRequestReviewThreadReply.comment.createdAt
+    } | select(.comment_id != null)' <<<"$response" 2>/dev/null); then
+      any_failed=1
+      entry=$(jq -c --arg tid "$tid" '{thread_id: $tid, error: "reply mutation failed"}' <<<'{}')
+    fi
+    results=$(jq -c --argjson e "$entry" '. + [$e]' <<<"$results")
+  done
+  printf '%s\n' "$results"
+  [ "$any_failed" -eq 1 ] && exit 2
+  exit 0
+}
+
 cmd_resolve() {
+  case "${1:-}" in -h|--help) echo "usage: cr resolve <pr-url> <thread-id>"; exit 0 ;; esac
   local pr_url="${1:-}" thread_id="${2:-}"
   [ -z "$pr_url" ] || [ -z "$thread_id" ] && \
     die "usage: cr resolve <pr-url> <thread-id>"
@@ -388,6 +446,7 @@ cmd_status() {
   local pr_url="" plain=0
   while [ $# -gt 0 ]; do
     case "$1" in
+      -h|--help) echo "usage: cr status <pr-url> [--plain]"; exit 0 ;;
       --plain) plain=1; shift ;;
       --*) die "unknown flag: $1" ;;
       *)
@@ -596,10 +655,12 @@ cmd_status() {
 }
 
 cmd_context() {
-  local pr_url="" thread_id="" full=0
+  local pr_url="" thread_id="" full=0 compact=0
   while [ $# -gt 0 ]; do
     case "$1" in
+      -h|--help) echo "usage: cr context <pr-url> <thread-id> [--full | --compact]"; exit 0 ;;
       --full) full=1; shift ;;
+      --compact) compact=1; shift ;;
       --*) die "unknown flag: $1" ;;
       *)
         if [ -z "$pr_url" ]; then pr_url="$1"
@@ -609,8 +670,9 @@ cmd_context() {
         shift ;;
     esac
   done
+  [ "$full" -eq 1 ] && [ "$compact" -eq 1 ] && die "cr context: --full and --compact are mutually exclusive"
   [ -z "$pr_url" ] || [ -z "$thread_id" ] && \
-    die "usage: cr context <pr-url> <thread-id> [--full]"
+    die "usage: cr context <pr-url> <thread-id> [--full | --compact]"
   parse_pr_url "$pr_url"
 
   # Reuse the threads pipeline so the same normalization (ai_prompt, severity,
@@ -641,6 +703,24 @@ cmd_context() {
 
   local is_resolved
   is_resolved=$(jq -r '.is_resolved' <<<"$thread")
+
+  # --compact mode: title + severity + location + jump link + 5-line ai_prompt only. Nothing else.
+  # For batch triage of 6+ threads where the full callouts + footer drown the signal.
+  if [ "$compact" -eq 1 ]; then
+    cat <<EOF
+**$title** ($sev, $location)
+$thread_url
+**State label**  $label
+EOF
+    if [ -n "$ai_prompt" ]; then
+      echo
+      printf '%s\n' "$ai_prompt" | head -5
+    elif [ -n "$last_bot_body" ]; then
+      echo
+      printf '%s\n' "$last_bot_body" | head -5
+    fi
+    return 0
+  fi
 
   cat <<EOF
 # CodeRabbit thread context
@@ -766,6 +846,7 @@ EOF
 }
 
 cmd_proposed_fix() {
+  case "${1:-}" in -h|--help) echo "usage: cr proposed-fix <pr-url> <thread-id>"; exit 0 ;; esac
   local pr_url="${1:-}" thread_id="${2:-}"
   [ -z "$pr_url" ] || [ -z "$thread_id" ] && \
     die "usage: cr proposed-fix <pr-url> <thread-id>"
@@ -802,6 +883,7 @@ cmd_proposed_fix() {
 }
 
 cmd_check() {
+  case "${1:-}" in -h|--help) echo "usage: cr check <pr-url> <thread-id> <our-comment-id>"; exit 0 ;; esac
   local pr_url="${1:-}" thread_id="${2:-}" our_id="${3:-}"
   [ -z "$pr_url" ] || [ -z "$thread_id" ] || [ -z "$our_id" ] && \
     die "usage: cr check <pr-url> <thread-id> <our-comment-id>"
@@ -849,18 +931,21 @@ post_coderabbit_command() {
 }
 
 cmd_resume() {
+  case "${1:-}" in -h|--help) echo "usage: cr resume <pr-url>"; exit 0 ;; esac
   local pr_url="${1:-}"
   [ -z "$pr_url" ] && die "usage: cr resume <pr-url>"
   post_coderabbit_command "$pr_url" "resume"
 }
 
 cmd_review() {
+  case "${1:-}" in -h|--help) echo "usage: cr review <pr-url>"; exit 0 ;; esac
   local pr_url="${1:-}"
   [ -z "$pr_url" ] && die "usage: cr review <pr-url>"
   post_coderabbit_command "$pr_url" "review"
 }
 
 cmd_full_review() {
+  case "${1:-}" in -h|--help) echo "usage: cr full-review <pr-url>"; exit 0 ;; esac
   local pr_url="${1:-}"
   [ -z "$pr_url" ] && die "usage: cr full-review <pr-url>"
   post_coderabbit_command "$pr_url" "full review"
@@ -871,6 +956,7 @@ cmd_resolve_all() {
   local pr_url="" confirm=0
   while [ $# -gt 0 ]; do
     case "$1" in
+      -h|--help) echo "usage: cr resolve-all <pr-url> --confirm"; exit 0 ;;
       --confirm) confirm=1; shift ;;
       --*) die "unknown flag: $1" ;;
       *)
@@ -889,6 +975,7 @@ cmd_pause() {
   local pr_url="" confirm=0
   while [ $# -gt 0 ]; do
     case "$1" in
+      -h|--help) echo "usage: cr pause <pr-url> --confirm"; exit 0 ;;
       --confirm) confirm=1; shift ;;
       --*) die "unknown flag: $1" ;;
       *)
@@ -908,6 +995,7 @@ cmd="${1:-}"; shift || true
 case "$cmd" in
   threads)      cmd_threads "$@" ;;
   reply)        cmd_reply "$@" ;;
+  reply-many)   cmd_reply_many "$@" ;;
   resolve)      cmd_resolve "$@" ;;
   status)       cmd_status "$@" ;;
   check)        cmd_check "$@" ;;
@@ -918,15 +1006,19 @@ case "$cmd" in
   full-review)  cmd_full_review "$@" ;;
   resolve-all)  cmd_resolve_all "$@" ;;
   pause)        cmd_pause "$@" ;;
+  -v|--version|version)
+    echo "cr $CR_VERSION"
+    ;;
   ""|-h|--help|help)
+    echo "cr — CodeRabbit review-thread CLI ($CR_VERSION)"
     cat <<'EOF'
-cr — CodeRabbit review-thread CLI
 
 Usage:
   cr threads      <pr-url> [--filter <name>] [--since <ref>]
-  cr context      <pr-url> <thread-id> [--full]
+  cr context      <pr-url> <thread-id> [--full | --compact]
   cr proposed-fix <pr-url> <thread-id>
   cr reply        <pr-url> <thread-id> <body>
+  cr reply-many   <pr-url> --body <body> <thread-id> [<thread-id>...]
   cr resolve      <pr-url> <thread-id>
   cr status       <pr-url> [--plain]
   cr check        <pr-url> <thread-id> <our-comment-id>

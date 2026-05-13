@@ -2,7 +2,7 @@
 name: coderabbit-threads
 description: Walk, go through, or handle a PR's open CodeRabbit review threads. Inspect what CodeRabbit wants (including its proposed-fix diffs) and reply or respond per-thread in a conversational loop. Use when handling CodeRabbit feedback across multiple review rounds, when threads need per-thread replies (not a bulk PR summary), when you want to read CodeRabbit's proposed fixes without applying them, when you need to surface CodeRabbit pushback or handle the next round of review, or when you want to auto-close threads only after CodeRabbit agrees. Distinct from coderabbit:autofix, which applies fixes and posts one summary comment.
 metadata:
-  version: "0.5.0"
+  version: "0.6.0"
   triggers:
     - coderabbit.?threads
     - cr.?threads
@@ -71,10 +71,11 @@ This skill ships with a bash CLI at `bin/cr` that wraps GitHub's GraphQL API. Us
 Subcommands (full signatures in `reference.md`):
 
 ```bash
-cr threads      <pr-url> [--filter open|all|unresolved|outdated|pushback] [--since <ref>]
-cr context      <pr-url> <thread-id> [--full]
+cr threads      <pr-url> [--filter open|all|unresolved|outdated|pushback|actionable] [--since <ref>]
+cr context      <pr-url> <thread-id> [--full | --compact]
 cr proposed-fix <pr-url> <thread-id>
 cr reply        <pr-url> <thread-id> <body>
+cr reply-many   <pr-url> --body <body> <thread-id> [<thread-id>...]
 cr resolve      <pr-url> <thread-id>
 cr status       <pr-url> [--plain]
 cr check        <pr-url> <thread-id> <our-comment-id>
@@ -404,6 +405,8 @@ For each thread in triage order:
 
    `--full` replaces the "What CodeRabbit wants" section with every comment on the thread, oldest first, each labeled with author + timestamp. Same header, same response-section. Re-run on the same thread; no other state changes.
 
+   **For batch triage of 6+ threads, use `--compact` instead** — title + severity + location + jump link + the first 5 lines of `ai_prompt`, with no callouts, no proposed-fix hint, and no "How to respond" footer. Stripped output keeps the signal-to-noise ratio sane when walking a long list. `--full` and `--compact` are mutually exclusive; the default (no flag) is the medium-verbosity form designed for single-thread reasoning.
+
    **CodeRabbit's proposed-fix diff has its own subcommand: `cr proposed-fix <pr-url> <thread-id>`.** Many CodeRabbit threads include a `<details><summary>Proposed fix</summary>` (or `<summary>💡 Suggested fix</summary>`) block with the changed lines. `cr threads` exposes `has_proposed_fix: true` on those threads so you know in advance; `cr proposed-fix` returns only the diff content (no surrounding conversation). `--full` still works for the whole-conversation read, but for "show me the bot's patch" specifically, prefer `cr proposed-fix` — it's one call instead of scraping markdown. Reach for `--full` when:
    - You're about to apply CodeRabbit's suggestion in code (you need the diff to see what changes verbatim)
    - The thread is `likely-fixed` and you want to verify *what* fix CodeRabbit expected vs. what your commit actually did
@@ -536,6 +539,19 @@ For each thread in triage order:
    our_comment_id=$(jq -r '.comment_id' <<<"$response")
    echo "$thread_id $our_comment_id" >> "$POLL_QUEUE"
    ```
+
+   **Batch fan-out for the "one commit closed N threads" case — `cr reply-many`.** When a single mechanical-fix commit addresses several `likely-fixed` (or `still-applies` after a fix-then-reply) threads with the *same* reply body, prefer one `cr reply-many` call over N sequential `cr reply` calls:
+
+   ```bash
+   response=$(cr reply-many "$pr_url" --body "Fixed in $sha by <one-line change>." \
+     "$tid_a" "$tid_b" "$tid_c")
+   # response is a JSON array; each element is {thread_id, comment_id, created_at}
+   # on success, or {thread_id, error} on failure. Enqueue all successes for polling.
+   jq -r '.[] | select(.comment_id) | "\(.thread_id) \(.comment_id)"' \
+     <<<"$response" >> "$POLL_QUEUE"
+   ```
+
+   Exit code is `0` if every reply landed, `2` if any failed. Failed entries still appear in the output array with an `error` field instead of `comment_id`; don't enqueue those — surface them to the user. Only batch when the reply body is *identical*; if even one thread needs a different `<one-line change>`, fall back to per-thread `cr reply`.
 
 5. **Do not resolve at reply time.** The decision to resolve a thread is deferred to Step 7 and gated by `RESOLVE_POLICY`.
 
