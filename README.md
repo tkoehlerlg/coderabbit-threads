@@ -78,15 +78,24 @@ Handled 4 threads. Posted 4 replies (3 autonomous, 1 user-chosen).
 
 ## Installation
 
+**Claude Code**:
+
 ```text
 /plugin marketplace add tkoehlerlg/coderabbit-threads
 /plugin install coderabbit-threads@coderabbit-threads
 /reload-plugins
 ```
 
-Then trigger it via natural language ("Go through the open CodeRabbit threads on this PR.") or `/coderabbit-threads`. Requires [`gh`](https://cli.github.com/) (authenticated) and [`jq`](https://jqlang.github.io/jq/) on `PATH`.
+Then trigger via `/coderabbit-threads` or natural language ("Go through the open CodeRabbit threads on this PR.").
 
-Full install paths — manual clone, Cursor, Copilot CLI / VS Code, Codex CLI, Gemini CLI, Windsurf, Cline, Kilo Code, Continue.dev, Zed Agent Panel, Aider, and the primitive-fallback matrix — are in [`INSTALLATION.md`](INSTALLATION.md).
+**Other hosts** (Cursor, Copilot CLI / VS Code, Codex CLI, Gemini CLI, Windsurf, Cline, Kilo Code, Continue.dev, Zed Agent Panel, Aider): see [`INSTALLATION.md`](INSTALLATION.md). Tier-2 hosts (Windsurf, Cline, Kilo, Continue, Zed) have a one-liner installer:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/tkoehlerlg/coderabbit-threads/main/scripts/install-adapter.sh \
+  | bash -s -- --host=<windsurf|cline|kilo|continue|zed>
+```
+
+Requires [`gh`](https://cli.github.com/) (authenticated) and [`jq`](https://jqlang.github.io/jq/) on `PATH`.
 
 ---
 
