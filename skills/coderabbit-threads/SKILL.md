@@ -2,7 +2,7 @@
 name: coderabbit-threads
 description: Go through a PR's open CodeRabbit review threads, inspect what CodeRabbit wants (including its proposed-fix diffs), and reply per-thread in a conversational loop. Use when handling CodeRabbit feedback across multiple review rounds, when threads need per-thread replies (not a bulk PR summary), when you want to read CodeRabbit's proposed fixes without applying them, when you need to surface CodeRabbit pushback, or when you want to auto-close threads only after CodeRabbit agrees. Distinct from coderabbit:autofix, which applies fixes and posts one summary comment.
 metadata:
-  version: "0.4.0"
+  version: "0.4.1"
   triggers:
     - coderabbit.?threads
     - cr.?threads

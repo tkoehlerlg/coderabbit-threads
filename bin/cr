@@ -173,11 +173,17 @@ normalize_threads() {
       | capture("<details>\\s*<summary>[^<]*Prompt for AI Agents[^<]*</summary>(?<p>[\\s\\S]*?)</details>"; "g")
       | .p // ""
       | gsub("^\\s+|\\s+$"; "")
-      # CodeRabbit prefixes the actual content with a generic instruction line
-      # aimed at its own auto-fix agent ("Verify each finding ... validate.").
-      # Strip it so the agent reading `ai_prompt` only sees the actionable summary.
-      | gsub("^Verify each finding against current code[^\\n]*(\\n+|$)"; "")
-      | gsub("^\\s+"; "");
+      # CodeRabbit wraps the ai-prompt payload in a fenced code block. Unwrap
+      # it so the preamble strip below sees plain text, not the fence markers.
+      | gsub("^```[a-zA-Z]*\\s*\\n?"; "")
+      | gsub("\\n?```\\s*$"; "")
+      # Strip the CodeRabbit auto-fix preamble: "Verify each finding against
+      # current code... validate." is an instruction CodeRabbit aims at its
+      # OWN auto-fix agent, not at this skill. Use [\\s\\S]*? to span newlines
+      # so the match works whether CodeRabbit emits the preamble as one line
+      # or wraps it across several.
+      | gsub("Verify each finding against current code[\\s\\S]*?validate\\.\\s*"; "")
+      | gsub("^\\s+|\\s+$"; "");
     def has_proposed_fix($body):
       ($body // "") | test("<summary>[^<]*\\b(proposed|suggested)\\b[^<]*\\bfix\\b[^<]*</summary>"; "i");
     def extract_title($body):

@@ -6,6 +6,14 @@ All notable changes to `coderabbit-threads` are tracked here. The format follows
 
 ## [Unreleased]
 
+## [0.4.1] — 2026-05-13
+
+Bugfix follow-up to v0.4.0 after the first live-PR verification run.
+
+### Fixed
+
+- **`ai_prompt` preamble strip now catches the fenced form.** v0.4.0's strip anchored at `^`, but CodeRabbit wraps the ai-prompt payload in a `` ``` `` code fence, so the preamble line lived *inside* the fence and the anchor never matched. v0.4.1 unwraps the fence first (`^```[lang]\n?` opener and `\n?```$` closer), then strips the preamble with a span-aware pattern (`[\\s\\S]*?validate\\.`) so the match works whether CodeRabbit emits the sentence on one line or wraps it across several. Verified on a live 6-thread PR: every `ai_prompt` now starts with the actionable "In `<file>` around lines…" content rather than the auto-fix preamble.
+
 ## [0.4.0] — 2026-05-13
 
 Bugfix + UX round driven by the first sustained run on a real PR. Two structural changes (binary relocated; slash command slimmed) plus four field-level improvements to make per-thread reasoning easier for the agent and for the user reading along.
