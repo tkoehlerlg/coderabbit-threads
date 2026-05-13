@@ -156,10 +156,14 @@ fetch_review_threads_raw() {
 # Normalize raw thread nodes into the documented output shape, filtered to
 # threads whose root comment author is CodeRabbit.
 #
-# Adds computed fields: severity, issue_type, title, ai_prompt, label,
+# Adds computed fields: severity, issue_type, title, ai_prompt, url, label,
 # last_bot_comment_*, last_human_comment_at.
+#
+# $1: the PR URL (used to construct per-thread `#discussion_r<id>` jump links).
+#     Pass "" if no URL is available; the `url` field becomes null.
 normalize_threads() {
-  jq -c '
+  local pr_url="${1:-}"
+  jq -c --arg pr_url "$pr_url" '
     def is_bot($a): ($a == "coderabbitai" or $a == "coderabbit" or $a == "coderabbitai[bot]" or $a == "coderabbit[bot]");
     def parse_header($body):
       ($body // "" | capture("(?<header>_[^_]+_\\s*\\|\\s*_[^_]+_)"; "g") | .header // "") as $h
@@ -167,7 +171,13 @@ normalize_threads() {
     def extract_ai_prompt($body):
       ($body // "")
       | capture("<details>\\s*<summary>[^<]*Prompt for AI Agents[^<]*</summary>(?<p>[\\s\\S]*?)</details>"; "g")
-      | .p // "" | gsub("^\\s+|\\s+$"; "");
+      | .p // ""
+      | gsub("^\\s+|\\s+$"; "")
+      # CodeRabbit prefixes the actual content with a generic instruction line
+      # aimed at its own auto-fix agent ("Verify each finding ... validate.").
+      # Strip it so the agent reading `ai_prompt` only sees the actionable summary.
+      | gsub("^Verify each finding against current code[^\\n]*(\\n+|$)"; "")
+      | gsub("^\\s+"; "");
     def has_proposed_fix($body):
       ($body // "") | test("<summary>[^<]*\\b(proposed|suggested)\\b[^<]*\\bfix\\b[^<]*</summary>"; "i");
     def extract_title($body):
@@ -212,8 +222,12 @@ normalize_threads() {
          then "outdated-unresolved" else $conv_label end) as $non_resolved_label
       | (if .isResolved then "resolved" else $non_resolved_label end) as $label
       | select($root != null)
+      | (if ($pr_url != "" and $root.databaseId != null)
+         then ($pr_url + "#discussion_r" + ($root.databaseId | tostring))
+         else null end) as $thread_url
       | {
           thread_id: .id,
+          url: $thread_url,
           is_resolved: .isResolved,
           is_outdated: .isOutdated,
           file: .path,
@@ -247,7 +261,15 @@ apply_filter() {
     unresolved)  jq -c '[ .[] | select(.is_resolved == false) ]' ;;
     outdated)    jq -c '[ .[] | select(.is_outdated == true and .is_resolved == false) ]' ;;
     pushback)    jq -c '[ .[] | select(.label == "bot-pushback" and .is_resolved == false) ]' ;;
-    *) die "unknown --filter: '$filter' (expected: open|all|unresolved|outdated|pushback)" ;;
+    # actionable: everything `open` returns, plus unresolved bot-pushback threads
+    # that became outdated in a later round (otherwise lost from `open`). Sort
+    # bot-pushback first so multi-round runs see the conversation-in-progress
+    # threads before the fresh ones.
+    actionable) jq -c '
+                  [ .[] | select(.is_resolved == false
+                                 and (.is_outdated == false or .label == "bot-pushback")) ]
+                  | sort_by(if .label == "bot-pushback" then 0 else 1 end)' ;;
+    *) die "unknown --filter: '$filter' (expected: open|all|unresolved|outdated|pushback|actionable)" ;;
   esac
 }
 
@@ -310,7 +332,7 @@ cmd_threads() {
         shift ;;
     esac
   done
-  [ -z "$pr_url" ] && die "usage: cr threads <pr-url> [--filter open|all|unresolved|outdated|pushback] [--since <ref>]"
+  [ -z "$pr_url" ] && die "usage: cr threads <pr-url> [--filter open|all|unresolved|outdated|pushback|actionable] [--since <ref>]"
   parse_pr_url "$pr_url"
   local since_iso=""
   if [ -n "$since_ref" ]; then
@@ -319,9 +341,9 @@ cmd_threads() {
   local raw
   raw=$(fetch_review_threads_raw)
   if [ -n "$since_iso" ]; then
-    printf '%s' "$raw" | normalize_threads | apply_filter "$filter" | apply_since "$since_iso"
+    printf '%s' "$raw" | normalize_threads "$pr_url" | apply_filter "$filter" | apply_since "$since_iso"
   else
-    printf '%s' "$raw" | normalize_threads | apply_filter "$filter"
+    printf '%s' "$raw" | normalize_threads "$pr_url" | apply_filter "$filter"
   fi
 }
 
@@ -588,10 +610,10 @@ cmd_context() {
   # Reuse the threads pipeline so the same normalization (ai_prompt, severity,
   # label, comments order) applies.
   local thread
-  thread=$(fetch_review_threads_raw | normalize_threads | jq -c --arg id "$thread_id" '.[] | select(.thread_id == $id)')
+  thread=$(fetch_review_threads_raw | normalize_threads "$pr_url" | jq -c --arg id "$thread_id" '.[] | select(.thread_id == $id)')
   [ -z "$thread" ] && die "thread '$thread_id' not found on PR (or not a CodeRabbit thread)"
 
-  local title sev itype file line label bot_at hum_at ai_prompt last_bot_body comment_count
+  local title sev itype file line label bot_at hum_at ai_prompt last_bot_body comment_count thread_url
   title=$(jq -r '.title // ""' <<<"$thread")
   sev=$(jq -r '.severity // "?"' <<<"$thread")
   itype=$(jq -r '.issue_type // "?"' <<<"$thread")
@@ -609,6 +631,7 @@ cmd_context() {
   ai_prompt=$(jq -r '.ai_prompt // ""' <<<"$thread")
   last_bot_body=$(jq -r '.comments | map(select(.author == "coderabbitai" or .author == "coderabbit" or .author == "coderabbitai[bot]" or .author == "coderabbit[bot]")) | last | .body // ""' <<<"$thread")
   comment_count=$(jq -r '.comments | length' <<<"$thread")
+  thread_url=$(jq -r '.url // ""' <<<"$thread")
 
   local is_resolved
   is_resolved=$(jq -r '.is_resolved' <<<"$thread")
@@ -621,6 +644,7 @@ cmd_context() {
 **Severity**     $sev
 **Type**         $itype
 **Location**     $location
+**Jump link**    ${thread_url:-(unavailable)}
 **State label**  $label
 **Last bot**     $bot_at
 **Last human**   $hum_at
@@ -742,7 +766,7 @@ cmd_proposed_fix() {
   parse_pr_url "$pr_url"
 
   local thread
-  thread=$(fetch_review_threads_raw | normalize_threads | jq -c --arg id "$thread_id" '.[] | select(.thread_id == $id)')
+  thread=$(fetch_review_threads_raw | normalize_threads "$pr_url" | jq -c --arg id "$thread_id" '.[] | select(.thread_id == $id)')
   [ -z "$thread" ] && die "thread '$thread_id' not found on PR (or not a CodeRabbit thread)"
 
   # Walk bot comments newest-first; for each, look inside any <details><summary>...proposed/suggested...fix...</summary>...</details>
@@ -909,7 +933,8 @@ Usage:
   cr pause        <pr-url> --confirm  # @coderabbitai pause        (explicit-allowance — stops CodeRabbit reviewing future pushes)
 
 Filters for `cr threads` (default: open):
-  open        unresolved AND not outdated  (the actionable set)
+  open        unresolved AND not outdated  (the default actionable set)
+  actionable  open ∪ unresolved bot-pushback (even if outdated), pushback first
   unresolved  unresolved, including outdated threads
   outdated    bot considered them possibly-fixed but they're still unresolved
   pushback    threads where the bot replied AFTER your last reply

@@ -18,7 +18,7 @@ Resource-not-found (a PR or thread that doesn't exist) is **exit 1**, not 2 — 
 ## `cr threads`
 
 ```
-cr threads <pr-url> [--filter open|all|unresolved|outdated|pushback] [--since <ref>]
+cr threads <pr-url> [--filter open|all|unresolved|outdated|pushback|actionable] [--since <ref>]
 ```
 
 Fetch all CodeRabbit review threads on the PR, fully paginated, filtered, normalized.
@@ -28,10 +28,13 @@ Fetch all CodeRabbit review threads on the PR, fully paginated, filtered, normal
 | Filter | Threads included |
 |--------|-------------------|
 | `open` (default) | `is_resolved == false && is_outdated == false` |
+| `actionable` | `open` ∪ unresolved `bot-pushback` (even if outdated). Sorted with `bot-pushback` first. |
 | `unresolved` | `is_resolved == false` (includes outdated) |
 | `outdated` | `is_outdated == true && is_resolved == false` |
 | `pushback` | `label == "bot-pushback"` |
 | `all` | every CodeRabbit thread |
+
+`actionable` is the right filter for **second-and-later runs on a long-lived PR**: it surfaces in-progress bot conversations (pushback) first, even when those threads got marked outdated by a later push, and otherwise behaves like `open`. Reach for it when the user re-runs the skill after a follow-up commit on a PR that already had a review pass.
 
 Threads whose root comment is not authored by CodeRabbit (`coderabbitai`, `coderabbitai[bot]`, `coderabbit`, `coderabbit[bot]`) are excluded unconditionally.
 
@@ -55,6 +58,7 @@ Bad input — a string that matches none of the three forms, or a SHA that isn't
 [
   {
     "thread_id": "PRT_kw...",
+    "url": "https://github.com/owner/repo/pull/132#discussion_r12345",
     "is_resolved": false,
     "is_outdated": false,
     "file": "apps/api/src/foo.ts",
@@ -64,7 +68,7 @@ Bad input — a string that matches none of the three forms, or a SHA that isn't
     "issue_type": "bug",
     "title": "Authorization logic inverted",
     "root_body": "<markdown of bot's first comment>",
-    "ai_prompt": "<🤖 Prompt for AI Agents section, if present>",
+    "ai_prompt": "<🤖 Prompt for AI Agents section, with CodeRabbit's auto-fix preamble stripped>",
     "comments": [
       { "id": 12345, "author": "coderabbitai", "body": "...", "created_at": "2026-05-12T14:32:00Z" },
       { "id": 12346, "author": "tkoehlerlg",  "body": "...", "created_at": "2026-05-12T14:40:00Z" }
@@ -80,6 +84,10 @@ Bad input — a string that matches none of the three forms, or a SHA that isn't
   }
 ]
 ```
+
+`url` is the stable GitHub jump link for the thread (`<pr-url>#discussion_r<root-comment-id>`). Surface it to the user in reply summaries and per-thread reports so they can click straight into the conversation rather than scrolling the PR.
+
+`ai_prompt` has CodeRabbit's generic auto-fix instruction line (`"Verify each finding against current code. Fix only still-valid issues..."`) stripped at extraction time. What remains is the actionable summary only.
 
 ### Computed `label` values
 

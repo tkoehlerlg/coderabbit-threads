@@ -6,6 +6,35 @@ All notable changes to `coderabbit-threads` are tracked here. The format follows
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-05-13
+
+Bugfix + UX round driven by the first sustained run on a real PR. Two structural changes (binary relocated; slash command slimmed) plus four field-level improvements to make per-thread reasoning easier for the agent and for the user reading along.
+
+### Changed
+
+- **Binary moved to plugin root: `bin/cr`** (was `skills/coderabbit-threads/bin/cr`). Claude Code's plugin loader auto-adds `<plugin-root>/bin/` to `$PATH` while the plugin is enabled, so the skill now invokes `cr` as a bare command with no path probing. The ~30-line path-resolution block in `SKILL.md` collapses to one paragraph. The `CR_BIN` env-var override stays for forks, vendored installs, and test rigs.
+- **Slash command `commands/coderabbit-threads.md` is now a thin router.** Resolves the PR URL silently via `!`-prefixed Bash context blocks, then hands off. Removes the prose that re-issued the skill's workflow inline and caused the body to fire twice.
+
+### Added
+
+- **`url` field on each `cr threads` entry.** Stable jump link — `<pr-url>#discussion_r<root-comment-id>`. Surfaced in `cr context`'s header and intended to be rendered as a markdown link in the Step 5 detail table, so the user can click into a thread instead of scrolling the PR.
+- **`--filter actionable` on `cr threads`.** `open` ∪ unresolved `bot-pushback` (even if outdated), sorted with `bot-pushback` first. Right filter for the second-and-later run on a long-lived PR, where earlier-round pushback can otherwise be hidden under `--filter open` once the cited code went outdated.
+- **Step 5 `📋 Summary only` mode.** Fourth answer alongside Together / Auto / Cancel. Re-prints the detail table with per-thread URLs and exits cleanly without posting anything. For the case where the user wants the overview but plans to handle threads in the GitHub UI.
+- **Step 3 freshness hint.** When `in_progress == false` AND `minutes_since_active <= 5`, surface a one-line warning that the bot just finished and may still be re-scanning — so the user knows why the thread count might be lower than expected on a long-lived PR. Informational, not a gate.
+- **`cr threads` field cheatsheet in SKILL.md Step 3.** Compact table of the actually-emitted keys (`thread_id`, `file`, `line`, `url`, etc.) so the agent stops reaching for GraphQL-native names like `.id` and `.path`.
+
+### Fixed
+
+- **`ai_prompt` strips CodeRabbit's auto-fix preamble.** The line `Verify each finding against current code. Fix only still-valid issues, skip the rest with a brief reason, keep changes minimal, and validate.` is CodeRabbit's instruction to its *own* auto-fix agent, not actionable content. Stripped at extraction time so `ai_prompt` carries the issue summary only.
+
+### Docs
+
+- **README `## Why it exists` collapsed** from ~33 lines (TL;DR bullets → prose retell → bulleted re-restatement) to one paragraph plus the autofix-distinction line. Three layers of overlapping content are now one.
+
+### Why a minor bump rather than a patch
+
+The binary location moved. Anyone who pinned `CR_BIN` to the previous in-skill path (`~/.claude/plugins/cache/<...>/skills/coderabbit-threads/bin/cr`) keeps working — the env-var override is unchanged. But the canonical location is different, and the loader-driven `cr`-on-PATH behaviour is what makes the path-resolution block disappear. That's worth flagging in the minor.
+
 ## [0.3.2] — 2026-05-12
 
 Participation awareness — the agent now knows who's in each conversation, including itself.

@@ -2,7 +2,7 @@
 name: coderabbit-threads
 description: Go through a PR's open CodeRabbit review threads, inspect what CodeRabbit wants (including its proposed-fix diffs), and reply per-thread in a conversational loop. Use when handling CodeRabbit feedback across multiple review rounds, when threads need per-thread replies (not a bulk PR summary), when you want to read CodeRabbit's proposed fixes without applying them, when you need to surface CodeRabbit pushback, or when you want to auto-close threads only after CodeRabbit agrees. Distinct from coderabbit:autofix, which applies fixes and posts one summary comment.
 metadata:
-  version: "0.3.2"
+  version: "0.4.0"
   triggers:
     - coderabbit.?threads
     - cr.?threads
@@ -77,27 +77,13 @@ cr resolve-all  <pr-url> --confirm  # EXPLICIT-ALLOWANCE — mass-closes ALL ope
 cr pause        <pr-url> --confirm  # EXPLICIT-ALLOWANCE — stops CodeRabbit reviewing future pushes
 ```
 
-At the start of the skill, locate `cr`:
+The plugin loader puts the plugin's `bin/` directory on `$PATH` while the plugin is enabled, so **call `cr` by name**. No path resolution, no probing.
 
 ```bash
-# 1. If the host runtime put `cr` on PATH (plugin loader does this), use it directly.
-# 2. Otherwise fall back to the user-skills install path.
-# 3. As a last resort, allow CR_BIN to override (useful for forks or non-standard installs).
-if command -v cr >/dev/null 2>&1; then
-  CR=cr
-elif [ -n "${CR_BIN:-}" ] && [ -x "$CR_BIN" ]; then
-  CR="$CR_BIN"
-elif [ -x "$HOME/.claude/skills/coderabbit-threads/bin/cr" ]; then
-  CR="$HOME/.claude/skills/coderabbit-threads/bin/cr"
-elif [ -x "$HOME/.claude/plugins/cache/coderabbit-threads/skills/coderabbit-threads/bin/cr" ]; then
-  CR="$HOME/.claude/plugins/cache/coderabbit-threads/skills/coderabbit-threads/bin/cr"
-else
-  echo "cr not found — set CR_BIN or install the skill into ~/.claude/skills/coderabbit-threads/" >&2
-  exit 1
-fi
+cr threads "$pr_url" --filter open
 ```
 
-Use `$CR` everywhere in this skill so the location is resolved once. Platforms that don't run shell at all (host runtime invokes the agent's bash tool ad-hoc) should adapt this to the equivalent path-resolution step.
+If the agent is running outside the plugin loader (forks, vendored installs, tests), point `CR_BIN` at the binary and invoke `"$CR_BIN"` instead. The binary itself lives at `<plugin-root>/bin/cr`; `${CLAUDE_PLUGIN_ROOT}/bin/cr` resolves to it inside skill Bash calls.
 
 ## Workflow
 
@@ -146,6 +132,12 @@ in_progress=$(jq -r '.in_progress' <<<"$pr_status")
 - `is_draft == true` → Inform "📝 PR is a draft; CodeRabbit doesn't review drafts. Mark ready for review first." EXIT.
 - `in_progress == true` → Inform "⏳ CodeRabbit review in progress, try again in a few minutes." EXIT.
 
+**Freshness hint (informational, do NOT bail out):** If `in_progress == false` AND `minutes_since_active != null` AND `minutes_since_active <= 5`, surface a one-line warning before continuing:
+
+> ⚠️ CodeRabbit posted ~`<minutes_since_active>` min ago. If you just pushed, it may still be re-scanning — threads from this round may not all be in yet.
+
+This is a hint, not a gate. The user proceeds anyway; they just know why the count might be lower than expected. Skip the hint when `minutes_since_active > 5` (the bot is likely done) or when it's `null` (no signal).
+
 #### Paused-mode dialog
 
 `cr status` returns `mode: 'reactive' | 'paused' | 'unknown'`. When `mode == "paused"`, CodeRabbit has been paused on this PR (auto-paused due to active development, or user-paused via `@coderabbitai pause`). Before walking threads, ask the user which posture they want:
@@ -180,6 +172,26 @@ count=$(jq 'length' <<<"$threads")
 ```
 
 **If `count == 0`:** Inform "No open CodeRabbit threads on PR." EXIT.
+
+#### `cr threads` field cheatsheet
+
+Each array entry is one thread. Read these fields; **do not invent GraphQL-native names** like `.id` or `.path` — they are renamed.
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `thread_id` | string | GraphQL node id — pass to every other `cr` subcommand |
+| `url` | string | Stable jump link `https://github.com/<o>/<r>/pull/<n>#discussion_r<id>` — surface to the user |
+| `file` / `line` / `start_line` | string / int? | Cited location; `line` may be null on file-level threads |
+| `severity` / `issue_type` / `title` | string? | Parsed from the bot's root-comment header |
+| `ai_prompt` | string | Distilled summary of what CodeRabbit wants — already stripped of CodeRabbit's auto-fix preamble |
+| `has_proposed_fix` | bool | If true, `cr proposed-fix` returns the diff |
+| `label` | string | `bot-pushback` / `awaiting-bot` / `untouched` / `outdated-unresolved` / `resolved` |
+| `is_resolved` / `is_outdated` | bool | Raw GitHub flags |
+| `created_at` / `last_bot_comment_at` / `last_human_comment_at` | ISO-8601? | Timestamps |
+| `last_author_reply_at` / `last_teammate_reply_at` / `last_running_user_reply_at` | ISO-8601? | Participation fields (see Step 4) |
+| `comments[]` | array | Full conversation; each `{ id, author, body, created_at }` |
+
+Full schema lives in `reference.md` under "Output shape".
 
 #### Multi-round PRs — `--since` to skip already-handled threads
 
@@ -304,12 +316,14 @@ The categorized summary makes the agent's plan explicit *before* anything happen
 
 #### (b) Detail table
 
+Use the per-thread `url` field from `cr threads` JSON to render each `Location` as a markdown link, so the user can click straight through to the thread instead of scrolling the PR:
+
 ```
-| # | Triage          | Severity | Location               | One-liner                  |
-|---|-----------------|----------|------------------------|----------------------------|
-| 1 | bot-pushback    | 🟠 HIGH  | apps/api/foo.ts:42     | Async call missing await   |
-| 2 | still-applies   | 🔴 CRIT  | apps/api/auth.ts:11    | Authorization inverted     |
-| 3 | likely-fixed    | 🟡 LOW   | apps/app/ui.tsx:88     | Use semantic button        |
+| # | Triage          | Severity | Location                                                | One-liner                  |
+|---|-----------------|----------|---------------------------------------------------------|----------------------------|
+| 1 | bot-pushback    | 🟠 HIGH  | [apps/api/foo.ts:42](https://github.com/o/r/pull/132#discussion_r12) | Async call missing await   |
+| 2 | still-applies   | 🔴 CRIT  | [apps/api/auth.ts:11](https://github.com/o/r/pull/132#discussion_r34) | Authorization inverted     |
+| 3 | likely-fixed    | 🟡 LOW   | [apps/app/ui.tsx:88](https://github.com/o/r/pull/132#discussion_r56)  | Use semantic button        |
 ```
 
 Severity icons: 🔴 critical/high → CRIT, 🟠 medium → HIGH, 🟡 minor/low → MEDIUM/LOW, 🟢 info → INFO.
@@ -322,13 +336,17 @@ Only after (a) and (b) are on screen, ask (via `AskUserQuestion` on Claude Code;
 >
 > - 🤝 **Together** — pause on every judgment call (`still-applies`, `contested`, `unclear`, `bot-pushback`)
 > - 🤖 **Auto** — handle on my own, only ping for the hard cases (`unclear`, `bot-pushback`, low-confidence `contested`)
+> - 📋 **Summary only** — print the detail table with thread URLs and stop. Don't post anything. The user will handle threads themselves.
 > - ❌ **Cancel**
 
-Store the answer as `MODE` (`together` / `auto`) and use it in Step 6.
+Store the answer as `MODE` (`together` / `auto` / `summary-only` / `cancel`) and use it in Step 6.
 
 Route:
 - Together / Auto → continue to **self-close policy** below
+- Summary only → re-print the detail table with `url` per thread, then EXIT cleanly (no replies posted, no resolves)
 - Cancel → EXIT
+
+`summary-only` is the right answer when the user wants the overview *without* the skill posting on their behalf — common when they want to handle threads manually in the GitHub UI, or when they want to read what CodeRabbit said before deciding whether to walk through later.
 
 **The two modes shift where the agent draws the line on autonomy.** Both modes auto-reply for `likely-fixed` and `out-of-scope`, since those don't need a human in the loop. The difference is what the agent does on `still-applies` and `contested`:
 
