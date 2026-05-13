@@ -91,7 +91,7 @@ For every Tier 1 host other than Claude Code, `bin/cr` is **not** auto-added to 
 
 ### Tier 2 — workflow / rule-file adapter (clean fit, thin wrapper)
 
-These runtimes have their own runbook format. A small wrapper file loads or references the canonical `SKILL.md`.
+These runtimes have their own runbook format. A small wrapper file loads or references the canonical `SKILL.md`. **Drop-in wrappers ship at [`adapters/`](adapters/)** — one per host, in the path the host expects. See [`adapters/README.md`](adapters/README.md) for the one-time vendoring step (`SKILL.md` and `reference.md` go into `<your-repo>/.coderabbit-threads/`).
 
 | Runtime | Host file | Activation | Notes |
 |---|---|---|---|
