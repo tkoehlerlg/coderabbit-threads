@@ -353,10 +353,15 @@ Store the answer as `MODE` (`together` / `auto` / `summary-only` / `cancel`) and
 
 Route:
 - Together / Auto → continue to **self-close policy** below
-- Summary only → re-print the detail table with `url` per thread, then EXIT cleanly (no replies posted, no resolves)
+- Summary only → re-print the detail table with `url` per thread, then EXIT cleanly (no replies posted, no resolves). **End the exit message with a re-invoke nudge**, verbatim:
+
+  > 📋 Summary only — nothing posted. When you're ready to reply on these threads, re-invoke `/coderabbit-threads` (or say "walk the CodeRabbit threads") so each thread gets its own pause-point. Don't jump straight to code on these — the per-thread loop is what catches design-call disagreements before they end up in a commit.
+
 - Cancel → EXIT
 
 `summary-only` is the right answer when the user wants the overview *without* the skill posting on their behalf — common when they want to handle threads manually in the GitHub UI, or when they want to read what CodeRabbit said before deciding whether to walk through later.
+
+**After a `summary-only` exit, if the user comes back with "let's work on them" / "handle these" / "fix the threads" — re-invoke the skill. Do NOT pick up where the summary left off by jumping into code.** The summary printed thread URLs; it did not walk Step 6's per-thread gate. Acting on those threads without re-entering the loop bypasses the `contested` / `still-applies` / `bot-pushback` consent points and lets the agent make design calls (status code, error-vs-warn, throw-vs-return) that belong to the user. If you're tempted to "just start fixing now that we've seen them," that's the failure mode — re-invoke.
 
 **The two modes shift where the agent draws the line on autonomy.** Both modes auto-reply for `likely-fixed` and `out-of-scope`, since those don't need a human in the loop. The difference is what the agent does on `still-applies` and `contested`:
 
@@ -430,6 +435,18 @@ For each thread in triage order:
    | `bot-pushback`  | **Ask the user.** CodeRabbit is mid-conversation; the next reply is theirs to write. | **Ask the user.** Same — bot-pushback always pings, even in auto.                          |
 
    **What "high-confidence" means for auto-`contested`:** the agent has a *specific, citable* technical reason (a line number where the inverse is true, a function signature that contradicts the bot's claim, a single-writer invariant the bot ignored). If the disagreement reduces to "feels off" or "I think the bot is wrong", that's not high-confidence — ask the user.
+
+   **Behavioral-contract disagreements are always a user call — never autonomous, regardless of confidence.** If CodeRabbit's suggestion and the agent's counter-proposal would produce **different observable behavior**, the choice between them is the user's, not the agent's. Examples that always escalate:
+
+   - Status code choice (CR says return `400`, agent prefers `log.warn` and continue)
+   - Error vs warning (throw / `return err` vs log-and-continue)
+   - Throw vs return-result, panic vs return-error, reject vs resolve-with-default
+   - Add-validation vs trust-caller (changes the function's contract with its callers)
+   - Side-effect on/off (write to audit log, emit metric, fire webhook)
+   - Strict vs lenient input parsing
+   - Sync vs async (changes the caller's awaiting contract)
+
+   The test isn't "am I confident the bot is wrong?" — both options can be defensible. The test is "would a downstream consumer see a different behavior depending on which side wins?". If yes, the agent doesn't get to pick; surface both sides per the "Don't give in too quickly" template and let the user decide. This holds in `MODE = auto` too: behavioral-contract calls are exempt from the high-confidence auto-`Won't fix` path.
 
    **For `likely-fixed`:** Find the commit SHA that addressed the issue (use `git log --since=<thread-created-at> -- <cited-file>` and pick the most plausible recent commit).
 
@@ -679,6 +696,14 @@ Out-of-scope of this PR — should be tracked separately. (deferring to a separa
 **Reading files outside the cited path**
 - Problem: Scope creep into unrelated code; security risk.
 - Fix: Only read the file at `thread.file`. Read the directory listing only if the issue is about file organization.
+
+**Acting on threads after a `summary-only` exit without re-invoking**
+- Problem: `summary-only` prints URLs and stops; it doesn't walk Step 6. If the user later says "let's work on them" and the agent jumps to code, the per-thread gates (`contested`, `still-applies`, `bot-pushback`) never fire — the agent ends up making behavioral-contract calls (e.g., picking `log.warn` when CodeRabbit suggested `return 400`) that belong to the user.
+- Fix: Treat "let's work on them" / "handle these" / "fix the threads" after a `summary-only` exit as a fresh invocation. Re-invoke the skill; don't resume from the printout.
+
+**Making a behavioral-contract call autonomously in `MODE = auto`**
+- Problem: Auto-`Won't fix` was designed for cases where CodeRabbit is technically wrong (cites a non-existent function, repeats an addressed finding). It was not designed for "I prefer a different contract than the bot." Picking `log.warn` over a `400` response is a design choice the user installed the skill to make.
+- Fix: Apply the behavioral-contract test in Step 6 before auto-posting `Won't fix`. If the agent's counter-proposal would produce different observable behavior than CodeRabbit's, surface both sides and ask — even with high confidence.
 
 ## Red Flags
 
