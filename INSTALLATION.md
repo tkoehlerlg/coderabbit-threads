@@ -91,15 +91,17 @@ For every Tier 1 host other than Claude Code, `bin/cr` is **not** auto-added to 
 
 ### Tier 2 — workflow / rule-file adapter (clean fit, thin wrapper)
 
-These runtimes have their own runbook format. A small wrapper file loads or references the canonical `SKILL.md`. **Drop-in wrappers ship at [`adapters/`](adapters/)** — one per host, in the path the host expects. See [`adapters/README.md`](adapters/README.md) for the one-time vendoring step (`SKILL.md` and `reference.md` go into `<your-repo>/.coderabbit-threads/`).
+These runtimes have their own runbook format. **Drop-in wrappers ship at [`adapters/`](adapters/)** — one per host, mirrored under the path the host expects. Each wrapper is a thin pointer that instructs the host agent to read the vendored `SKILL.md` at runtime (or, for Continue.dev, transcludes it via Handlebars). See [`adapters/README.md`](adapters/README.md) for the one-time vendoring step (`SKILL.md` and `reference.md` go into `<your-repo>/.coderabbit-threads/`).
 
-| Runtime | Host file | Activation | Notes |
-|---|---|---|---|
-| **Windsurf** | `.windsurf/workflows/coderabbit-threads.md` with `auto_execution_mode: 3` | `/coderabbit-threads` | Workflow files cap at 12,000 chars, so `SKILL.md` needs trimming or splitting (the long Step-6 reach criteria can live in a `.windsurf/rules/coderabbit-fix-reach.md` referenced by `@`). Add `cr` to `cascadeCommandsAllowList`. |
-| **Cline** | `.clinerules/10-coderabbit-threads.md` (the runbook) plus `.clinerules/workflows/coderabbit-threads.md` (the slash binding) | `/coderabbit-threads` | Per-permission auto-approve (Edit / Execute) maps onto the skill's `MODE=auto` gate. No 60s scheduler. |
-| **Kilo Code** (Roo Code's successor — Roo archives 2026-05-15) | `.roomodes` plus `.roo/rules-coderabbit-threads/01-runbook.md` | Mode switch | No user-defined slash commands; pick the mode from the selector, or trigger by phrase and let `switch_mode` fire. |
-| **Continue.dev** | `~/.continue/prompts/coderabbit-threads.prompt` with `invokable: true` | `/coderabbit-threads` | Set `run_terminal_command` to `Automatic` in `tools` for sticky-style approval. |
-| **Zed Agent Panel** | Rules Library entry (or repo `.rules`) | `@coderabbit-threads` plus a trigger phrase | Use the **Write** profile so the `terminal` tool is enabled. An `agent.tool_permissions` rule `always_allow ^cr ` gives sticky approval for `cr` calls. |
+| Runtime | Copy adapter | To repo path | Activation | Notes |
+|---|---|---|---|---|
+| **Windsurf** | [`adapters/windsurf/.windsurf/workflows/coderabbit-threads.md`](adapters/windsurf/.windsurf/workflows/coderabbit-threads.md) | `.windsurf/workflows/coderabbit-threads.md` | `/coderabbit-threads` | Frontmatter `auto_execution_mode: 3`. Wrapper instructs Cascade to `read_file .coderabbit-threads/SKILL.md` at runtime (no static `@`-include for workflows). Add `cr` to `cascadeCommandsAllowList`. |
+| **Cline** (rule) | [`adapters/cline/.clinerules/10-coderabbit-threads.md`](adapters/cline/.clinerules/10-coderabbit-threads.md) | `.clinerules/10-coderabbit-threads.md` | (always-loaded) | Numeric `10-` prefix orders it after lower-numbered rules in Cline's alphanumeric concat. |
+| **Cline** (workflow) | [`adapters/cline/.clinerules/workflows/coderabbit-threads.md`](adapters/cline/.clinerules/workflows/coderabbit-threads.md) | `.clinerules/workflows/coderabbit-threads.md` | `/coderabbit-threads.md` | Per-permission auto-approve (Edit / Execute) maps onto the skill's `MODE=auto` gate. No 60s scheduler. |
+| **Kilo Code** (mode) | [`adapters/kilo-code/.roomodes`](adapters/kilo-code/.roomodes) | `.roomodes` | Mode switch | Roo Code's successor — Roo archives 2026-05-15. No user-defined slash commands; pick the mode from the selector, or trigger by phrase. |
+| **Kilo Code** (rule) | [`adapters/kilo-code/.roo/rules-coderabbit-threads/01-runbook.md`](adapters/kilo-code/.roo/rules-coderabbit-threads/01-runbook.md) | `.roo/rules-coderabbit-threads/01-runbook.md` | (auto with mode) | Flat-concatenated into the mode body when the mode is active. |
+| **Continue.dev** | [`adapters/continue/coderabbit-threads.prompt`](adapters/continue/coderabbit-threads.prompt) | `.continue/prompts/coderabbit-threads.prompt` (or `~/.continue/prompts/`) | `/coderabbit-threads` | The only Tier-2 host with native static includes — wrapper uses Handlebars `{{{ .coderabbit-threads/SKILL.md }}}` to transclude the runbook directly. Set `run_terminal_command` to `Automatic` for sticky-style approval. |
+| **Zed Agent Panel** | [`adapters/zed/.rules`](adapters/zed/.rules) | `.rules` (repo root) | `@coderabbit-threads` plus trigger phrase | Zed has no rule-file include syntax, so the wrapper *instructs* the agent to `read_file` the vendored runbook. Use the **Write** profile (terminal tool enabled). `agent.tool_permissions` rule `always_allow ^cr ` gives sticky approval for `cr` calls. |
 
 ### Tier 3 — phrase-driven (degraded UX)
 
