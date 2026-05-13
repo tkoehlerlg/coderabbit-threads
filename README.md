@@ -78,121 +78,15 @@ Handled 4 threads. Posted 4 replies (3 autonomous, 1 user-chosen).
 
 ## Installation
 
-### Via Claude Code plugin marketplace
-
 ```text
 /plugin marketplace add tkoehlerlg/coderabbit-threads
 /plugin install coderabbit-threads@coderabbit-threads
 /reload-plugins
 ```
 
-The repo ships a single-plugin `.claude-plugin/marketplace.json` so the `/plugin marketplace add` slash command points at this repo directly. After install, Claude Code will discover the skill the next time you ask it to handle a PR's CodeRabbit threads.
+Then trigger it via natural language ("Go through the open CodeRabbit threads on this PR.") or `/coderabbit-threads`. Requires [`gh`](https://cli.github.com/) (authenticated) and [`jq`](https://jqlang.github.io/jq/) on `PATH`.
 
-The `coderabbit-threads@coderabbit-threads` ID isn't a typo. Claude Code plugin IDs are `<plugin-name>@<marketplace-name>`, and this is a single-plugin marketplace where both names happen to be the same.
-
-### Manual install
-
-Clone into your `~/.claude/skills/` directory:
-
-```bash
-mkdir -p ~/.claude/skills
-git clone https://github.com/tkoehlerlg/coderabbit-threads.git ~/.claude/skills/coderabbit-threads-repo
-ln -s ~/.claude/skills/coderabbit-threads-repo/skills/coderabbit-threads \
-       ~/.claude/skills/coderabbit-threads
-chmod +x ~/.claude/skills/coderabbit-threads/bin/cr
-```
-
-Verify Claude Code can see it:
-
-```bash
-ls ~/.claude/skills/coderabbit-threads/SKILL.md
-~/.claude/skills/coderabbit-threads/bin/cr --help 2>&1 | head
-```
-
-Then in a Claude Code session:
-
-```text
-/skills
-```
-
-`coderabbit-threads` should appear in the list. Invoke it by asking, for example:
-
-> Go through the open CodeRabbit threads on this PR.
-
-Or use the bundled slash command:
-
-```text
-/coderabbit-threads                                       # current-branch PR
-/coderabbit-threads 142                                   # explicit PR number on this repo
-/coderabbit-threads https://github.com/owner/repo/pull/14 # explicit URL
-```
-
-If the current branch has no PR, the command lists recent open PRs and asks which one to review. It never silently guesses.
-
-### Other agent runtimes
-
-The `cr` CLI is plain bash + `gh` + `jq`, so it runs anywhere. The skill *runbook* (SKILL.md) is platform-aware but degrades to portable shell-only behavior when host primitives aren't available.
-
-Targets below are grouped by integration shape. Tier 1 hosts now ship a native Agent Skills system that loads `SKILL.md` directly. Tier 2 hosts need a thin wrapper file that references the runbook. Tier 3 is phrase-driven only. Only Claude Code is end-to-end verified; everything else is a documented install path, and PRs adding verified-on-X badges are welcome.
-
-#### Tier 1 — native Agent Skills (drop-in)
-
-| Runtime | Install path | Activation | Notes |
-|---|---|---|---|
-| **Claude Code** | Plugin marketplace (above), or `~/.claude/skills/coderabbit-threads/` | `/coderabbit-threads`, or natural language | All four primitives (`AskUserQuestion`, `ScheduleWakeup`, sticky approvals, slash command) work natively. Only fully verified runtime. |
-| **Cursor 2.4+** | `~/.cursor/skills/coderabbit-threads/`, or repo `.cursor/skills/coderabbit-threads/` | `/coderabbit-threads`, or natural language | Same `SKILL.md` shape. No in-IDE `ScheduleWakeup`; Step 7 falls back to "re-run in ~2 min", with an optional Cursor Automation cron as a power-user upgrade. Use Auto-Run mode **Sandbox** or **Ask Every Time**. |
-| **Copilot CLI** | `~/.claude/skills/coderabbit-threads/` (Copilot reads `.claude/skills/` natively), or `~/.copilot/skills/coderabbit-threads/` | `/coderabbit-threads`, or natural language | Pre-approve shell calls with `copilot --allow-tool='shell(cr),shell(gh),shell(jq)'` to avoid per-command prompts. |
-| **Copilot Chat (VS Code agent mode)** | repo `.claude/skills/coderabbit-threads/`, or `~/.claude/skills/coderabbit-threads/` | `/coderabbit-threads`, or natural language | Same skill system as Copilot CLI; runs in the local workspace so `gh auth status` carries over. |
-| **Codex CLI** | `~/.codex/skills/coderabbit-threads/`, or repo `.agents/skills/coderabbit-threads/` | `$coderabbit-threads`, `/skills` picker, or natural language | Recommended posture is `--sandbox workspace-write --ask-for-approval on-request`. |
-| **Gemini CLI** | `~/.gemini/skills/coderabbit-threads/`, or `gemini extensions install …` | `/skills`, `activate_skill`, or an optional `.gemini/commands/coderabbit-threads.toml` slash binding | Add `cr` / `gh` / `git` to `tools.allowed` in `~/.gemini/settings.json` to skip per-call prompts. |
-
-For every Tier 1 host other than Claude Code, `bin/cr` is **not** auto-added to `$PATH`. Either symlink `cr` into a PATH directory at install time, or set `CR_BIN=<plugin-root>/skills/coderabbit-threads/bin/cr` in your shell rc. The skill already honors `CR_BIN`.
-
-#### Tier 2 — workflow / rule-file adapter (clean fit, thin wrapper)
-
-These runtimes have their own runbook format. A small wrapper file loads or references the canonical `SKILL.md`.
-
-| Runtime | Host file | Activation | Notes |
-|---|---|---|---|
-| **Windsurf** | `.windsurf/workflows/coderabbit-threads.md` with `auto_execution_mode: 3` | `/coderabbit-threads` | Workflow files cap at 12,000 chars, so `SKILL.md` needs trimming or splitting (the long Step-6 reach criteria can live in a `.windsurf/rules/coderabbit-fix-reach.md` referenced by `@`). Add `cr` to `cascadeCommandsAllowList`. |
-| **Cline** | `.clinerules/10-coderabbit-threads.md` (the runbook) plus `.clinerules/workflows/coderabbit-threads.md` (the slash binding) | `/coderabbit-threads` | Per-permission auto-approve (Edit / Execute) maps onto the skill's `MODE=auto` gate. No 60s scheduler. |
-| **Kilo Code** (Roo Code's successor — Roo archives 2026-05-15) | `.roomodes` plus `.roo/rules-coderabbit-threads/01-runbook.md` | Mode switch | No user-defined slash commands; pick the mode from the selector, or trigger by phrase and let `switch_mode` fire. |
-| **Continue.dev** | `~/.continue/prompts/coderabbit-threads.prompt` with `invokable: true` | `/coderabbit-threads` | Set `run_terminal_command` to `Automatic` in `tools` for sticky-style approval. |
-| **Zed Agent Panel** | Rules Library entry (or repo `.rules`) | `@coderabbit-threads` plus a trigger phrase | Use the **Write** profile so the `terminal` tool is enabled. An `agent.tool_permissions` rule `always_allow ^cr ` gives sticky approval for `cr` calls. |
-
-#### Tier 3 — phrase-driven (degraded UX)
-
-| Runtime | Host file | Activation | Notes |
-|---|---|---|---|
-| **Aider** | `read: SKILL.md` in `.aider.conf.yml`; shell-out via `/run cr …` | Phrase only ("walk the CodeRabbit threads on this PR") | No slash registry, no structured prompts, no scheduler. Aider's single-conversation edit-centric model fights the per-thread loop, but the path works. |
-
-#### Not currently supported
-
-- **Copilot coding agent (cloud).** Firewalled sandbox, `copilot/*`-branch-only commits, no interactive Q/A, no path for replying on a human's PR threads. The cloud surface is the wrong tool for this job; `coderabbit:autofix` covers that lane.
-- **Roo Code.** RooCodeInc/Roo-Code archives 2026-05-15. Migrate to Kilo Code (above), which inherits the same custom-modes + `.roo/rules-{slug}/` model.
-
-#### Bare `cr` use — always works
-
-Most of the value lives in `cr` itself. `cr threads`, `cr context`, `cr proposed-fix`, `cr reply`, `cr resolve` are all callable from any shell once `gh` is authenticated. The `SKILL.md` runbook is the choreography on top, and you can also follow it by hand.
-
-#### Primitive-fallback summary
-
-What's missing on hosts outside Claude Code, and how the skill compensates:
-
-- `AskUserQuestion` → numbered list with stdin / chat prompt.
-- `ScheduleWakeup` 60s polling → print "re-run in ~2 min to check CodeRabbit's reactions" and exit.
-- `/coderabbit-threads` slash command → native on most Tier 1 / Tier 2 hosts; otherwise a natural-language trigger.
-
-The triage logic, the `MODE` (together/auto) gate, the `RESOLVE_POLICY` gate, sticky approvals, fix-then-reply, `cr proposed-fix`, and `--since <ref>` all work the same on every runtime.
-
-### Requirements
-
-- [`gh`](https://cli.github.com/) (GitHub CLI), authenticated: `gh auth status` must succeed
-- [`jq`](https://jqlang.github.io/jq/) on `PATH`
-- `bash` 3.2+ (the macOS system bash works fine; the script avoids bash-4-only features)
-- An open PR on the current branch with at least one CodeRabbit review thread
-
-No tokens, no extra config. `cr` uses whatever `gh auth login` configured.
+Full install paths — manual clone, Cursor, Copilot CLI / VS Code, Codex CLI, Gemini CLI, Windsurf, Cline, Kilo Code, Continue.dev, Zed Agent Panel, Aider, and the primitive-fallback matrix — are in [`INSTALLATION.md`](INSTALLATION.md).
 
 ---
 
@@ -228,7 +122,7 @@ Distinct from `coderabbit:autofix`, which applies CodeRabbit's suggested diffs a
 
 ## The `cr` CLI
 
-`cr` is a bash CLI shipped at `skills/coderabbit-threads/bin/cr`. It wraps `gh api` (REST + GraphQL) with pagination, filtering, and normalized JSON output. The skill itself never builds GraphQL; only `cr` does.
+`cr` is a bash CLI shipped at `bin/cr` (plugin root). It wraps `gh api` (REST + GraphQL) with pagination, filtering, and normalized JSON output. The skill itself never builds GraphQL; only `cr` does. When the plugin is enabled, Claude Code's loader auto-adds the plugin's `bin/` to `$PATH`, so `cr` is invokable as a bare command.
 
 | Subcommand                                         | Purpose                                                       |
 |----------------------------------------------------|---------------------------------------------------------------|
@@ -309,7 +203,7 @@ Known gaps and intentional scoping:
 
 - **Polling backoff.** Step 7 polls at a fixed 60s interval up to 5 min. Adaptive backoff (start fast, slow down) is a future improvement.
 - **No auto-created issues.** When the user marks a thread `out-of-scope`, the reply notes it but no Linear/Jira/GitHub issue is created. Users do that themselves; the skill stays narrow.
-- **Other agent runtimes, verification pending.** The skill is structured to work on Cursor, Copilot (CLI + VS Code agent mode), Codex CLI, Gemini CLI, Windsurf, Cline, Kilo Code, Continue.dev, Zed Agent Panel, and Aider (see [Other agent runtimes](#other-agent-runtimes)), but Claude Code is the only runtime currently end-to-end verified. PRs adding verified-on-X badges welcome.
+- **Other agent runtimes, verification pending.** The skill is structured to work on Cursor, Copilot (CLI + VS Code agent mode), Codex CLI, Gemini CLI, Windsurf, Cline, Kilo Code, Continue.dev, Zed Agent Panel, and Aider (see [`INSTALLATION.md`](INSTALLATION.md)), but Claude Code is the only runtime currently end-to-end verified. PRs adding verified-on-X badges welcome.
 
 ---
 
@@ -323,7 +217,7 @@ The skill itself is described, in its entirety, in:
 
 - [`skills/coderabbit-threads/SKILL.md`](skills/coderabbit-threads/SKILL.md) — the runbook Claude Code reads
 - [`skills/coderabbit-threads/reference.md`](skills/coderabbit-threads/reference.md) — `cr` CLI subcommand schemas
-- [`skills/coderabbit-threads/bin/cr`](skills/coderabbit-threads/bin/cr) — the CLI itself
+- [`bin/cr`](bin/cr) — the CLI itself
 
 ---
 
