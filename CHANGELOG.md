@@ -6,6 +6,19 @@ All notable changes to `coderabbit-threads` are tracked here. The format follows
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-05-13
+
+Multi-host expansion. Adds drop-in wrapper files and a one-liner installer for the Tier-2 hosts documented in INSTALLATION.md (Windsurf, Cline, Kilo Code, Continue.dev, Zed), plus matching documentation. No changes to the Claude Code install path or the runbook itself.
+
+### Added — Tier-2 host adapters + installer
+
+- **[`adapters/`](adapters/) tree.** Drop-in wrapper files for Tier-2 hosts (Windsurf, Cline, Kilo Code, Continue.dev, Zed). Each wrapper mirrors the host's expected install path (`adapters/<host>/<host-path>/<file>`) and is ≤ 25 lines — they instruct the host agent to read the vendored runbook at runtime (or, for Continue.dev, transclude it via Handlebars `{{{ ./path }}}`).
+- **[`scripts/install-adapter.sh`](scripts/install-adapter.sh).** One-liner installer (`curl -fsSL .../install-adapter.sh | bash -s -- --host=<host>`). Vendors `SKILL.md` + `reference.md` into `<your-repo>/.coderabbit-threads/`, then copies the matching adapter file(s) into the host's expected path. Supports `--target=`, `--ref=`, `--force`, `--help`. Bare invocation also shows help (standard CLI etiquette).
+- **[`adapters/README.md`](adapters/README.md).** Documents the vendor + copy step, including the one-liner installer up top, and explains why each host gets a `read_file` instruction vs a static `{{{ include }}}` (Continue is the only Tier-2 host with native include syntax).
+- **INSTALLATION.md Tier-2 table.** Now points at the adapter files directly (one row per file), with the installer one-liner above the table.
+
+Why the runbook is *vendored* rather than `@`-included: per-host research found that only Continue.dev supports static includes from inside a rule/workflow file. Windsurf, Cline, Kilo Code, and Zed all require the wrapper to instruct the agent to read the path at runtime. Vendor-in-repo is the only strategy natively honoured everywhere.
+
 ## [0.4.1] — 2026-05-13
 
 Bugfix follow-up to v0.4.0 after the first live-PR verification run.

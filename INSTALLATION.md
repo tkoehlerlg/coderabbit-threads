@@ -91,7 +91,16 @@ For every Tier 1 host other than Claude Code, `bin/cr` is **not** auto-added to 
 
 ### Tier 2 — workflow / rule-file adapter (clean fit, thin wrapper)
 
-These runtimes have their own runbook format. **Drop-in wrappers ship at [`adapters/`](adapters/)** — one per host, mirrored under the path the host expects. Each wrapper is a thin pointer that instructs the host agent to read the vendored `SKILL.md` at runtime (or, for Continue.dev, transcludes it via Handlebars). See [`adapters/README.md`](adapters/README.md) for the one-time vendoring step (`SKILL.md` and `reference.md` go into `<your-repo>/.coderabbit-threads/`).
+These runtimes have their own runbook format. **One-liner installer** vendors the runbook into `<your-repo>/.coderabbit-threads/` and drops the matching wrapper file(s) at the host's expected path:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/tkoehlerlg/coderabbit-threads/main/scripts/install-adapter.sh \
+  | bash -s -- --host=<windsurf|cline|kilo|continue|zed>
+```
+
+Or from a clone: `./scripts/install-adapter.sh --host=windsurf`. Run it from your project root; pass `--target=<path>` for a different root, `--ref=v0.4.1` to pin a version, `--force` to overwrite existing files.
+
+Drop-in wrappers also ship at [`adapters/`](adapters/) for manual copy if you'd rather not run a script. Each wrapper is a thin pointer that instructs the host agent to read the vendored `SKILL.md` at runtime (or, for Continue.dev, transcludes it via Handlebars). See [`adapters/README.md`](adapters/README.md) for details.
 
 | Runtime | Copy adapter | To repo path | Activation | Notes |
 |---|---|---|---|---|

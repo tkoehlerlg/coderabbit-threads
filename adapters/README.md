@@ -2,12 +2,22 @@
 
 Thin wrapper files for hosts that don't natively load `SKILL.md`. Each wrapper sits in the host's expected location and points at the canonical runbook.
 
-## How they work
+## Recommended — one-liner installer
 
-1. **Vendor the runbook into your repo.** Copy `skills/coderabbit-threads/SKILL.md` from this plugin into your project as `.coderabbit-threads/SKILL.md`. (Or `git submodule add` the plugin and symlink.) The wrappers reference this path.
+```bash
+curl -fsSL https://raw.githubusercontent.com/tkoehlerlg/coderabbit-threads/main/scripts/install-adapter.sh \
+  | bash -s -- --host=<windsurf|cline|kilo|continue|zed>
+```
+
+Run from your project root. The installer fetches the canonical `SKILL.md` and `reference.md` into `<your-repo>/.coderabbit-threads/`, then drops the matching adapter file(s) at the host's expected path. Pass `--target=<path>` for a different root, `--ref=v0.4.1` to pin a version, `--force` to overwrite existing files. Run with `--help` for the full reference.
+
+After install, make `cr` callable: either symlink `bin/cr` from the plugin into a `$PATH` directory, or set `CR_BIN=<path-to>/coderabbit-threads/bin/cr` in your shell rc. If you have the plugin installed via Claude Code, `cr` is already on `$PATH`.
+
+## Manual install (if you'd rather not run a script)
+
+1. **Vendor the runbook.** From your project root:
 
    ```bash
-   # From your project root:
    mkdir -p .coderabbit-threads
    curl -sL https://raw.githubusercontent.com/tkoehlerlg/coderabbit-threads/main/skills/coderabbit-threads/SKILL.md \
      > .coderabbit-threads/SKILL.md
@@ -15,17 +25,17 @@ Thin wrapper files for hosts that don't natively load `SKILL.md`. Each wrapper s
      > .coderabbit-threads/reference.md
    ```
 
-2. **Drop the matching wrapper into your project.** Each subdirectory under `adapters/` mirrors the path the host expects:
+2. **Copy the matching wrapper.** Each subdirectory under `adapters/` mirrors the path the host expects:
 
-   | Host | Wrapper path (copy as-is) |
+   | Host | Copy from → To repo path |
    |---|---|
-   | Windsurf | `adapters/windsurf/.windsurf/workflows/coderabbit-threads.md` → `<your-repo>/.windsurf/workflows/coderabbit-threads.md` |
-   | Cline | `adapters/cline/.clinerules/10-coderabbit-threads.md` → `<your-repo>/.clinerules/10-coderabbit-threads.md` plus `adapters/cline/.clinerules/workflows/coderabbit-threads.md` → `<your-repo>/.clinerules/workflows/coderabbit-threads.md` |
-   | Kilo Code | `adapters/kilo-code/.roomodes` → `<your-repo>/.roomodes` plus `adapters/kilo-code/.roo/rules-coderabbit-threads/01-runbook.md` → `<your-repo>/.roo/rules-coderabbit-threads/01-runbook.md` |
-   | Continue.dev | `adapters/continue/coderabbit-threads.prompt` → `<your-repo>/.continue/prompts/coderabbit-threads.prompt` (or `~/.continue/prompts/`) |
-   | Zed | `adapters/zed/.rules` — **inline only**, see below |
+   | Windsurf | `adapters/windsurf/.windsurf/workflows/coderabbit-threads.md` → `.windsurf/workflows/coderabbit-threads.md` |
+   | Cline | `adapters/cline/.clinerules/10-coderabbit-threads.md` → `.clinerules/10-coderabbit-threads.md` plus `adapters/cline/.clinerules/workflows/coderabbit-threads.md` → `.clinerules/workflows/coderabbit-threads.md` |
+   | Kilo Code | `adapters/kilo-code/.roomodes` → `.roomodes` plus `adapters/kilo-code/.roo/rules-coderabbit-threads/01-runbook.md` → `.roo/rules-coderabbit-threads/01-runbook.md` |
+   | Continue.dev | `adapters/continue/coderabbit-threads.prompt` → `.continue/prompts/coderabbit-threads.prompt` (or `~/.continue/prompts/`) |
+   | Zed | `adapters/zed/.rules` → `.rules` (repo root) |
 
-3. **Make `cr` callable.** Either symlink `bin/cr` from the plugin into a `$PATH` directory, or set `CR_BIN=<path-to>/coderabbit-threads/bin/cr` in your shell rc.
+3. **Make `cr` callable** (same as installer step above).
 
 ## Why not just `@`-reference the runbook?
 
