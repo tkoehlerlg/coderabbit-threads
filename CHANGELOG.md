@@ -10,25 +10,25 @@ All notable changes to `coderabbit-threads` are tracked here. The format follows
 
 CLI polish round driven by a real-PR walkthrough. Adds a batch-reply primitive, a compact `cr context` mode for triaging long thread lists, per-subcommand `--help`, and `cr --version`. Also tightens two workflow gaps in `SKILL.md` surfaced after an agent bypassed the per-thread loop following a `summary-only` exit. No breaking changes.
 
-### Added — CLI
+### Added
 
 - **`cr reply-many <pr-url> --body <body> <thread-id> [<thread-id>...]`.** Fan-out: post one body to N threads in a single call. Output is a JSON array; each element is `{thread_id, comment_id, created_at}` on success or `{thread_id, error}` on failure. Exit `0` if every reply landed, `2` if any failed. Replaces the common pattern of three sequential `cr reply` calls after a mechanical-fix commit that closed three related issues with the same `Fixed in <sha> by …` body.
 - **`cr context --compact`.** Strips the standard context block down to title, severity, location, jump link, and the first 5 lines of `ai_prompt`. No `[!IMPORTANT]` / `[!TIP]` callouts, no proposed-fix hint, no "How to respond" footer. For batch triage of 6+ threads where the full callouts drown the per-thread signal. `--full` and `--compact` are mutually exclusive.
 - **Per-subcommand `--help`.** Every `cr <subcommand>` now responds to `-h` / `--help` with its usage line and exits `0`. Previously the top-level `cr --help` worked but subcommand-level rejected with `unknown flag: --help`.
 - **`cr --version` / `cr -v` / `cr version`.** Prints `cr <version>` and exits `0`. The constant lives in `bin/cr` and is bumped alongside `plugin.json` + `SKILL.md` frontmatter.
 
-### Changed — SKILL.md
+### Changed
 
-- **Step 5 `summary-only` route** now exits with a verbatim re-invoke nudge ("when you're ready to reply, re-invoke `/coderabbit-threads` so each thread gets its own pause-point") plus a paragraph explicitly forbidding "let's work on them" follow-ups from jumping to code. Closes a real workflow gap surfaced when an agent bypassed Step 6 after a summary-only run and made a behavioral-contract call without prompting the user.
-- **Step 6 contested gate** carves out behavioral-contract disagreements (status code, error vs warn, throw vs return, sync vs async, side effects, etc.) as always-ask. Even in `MODE = auto` and even with high confidence — both options can be defensible and the choice belongs to the user, not the agent. The "high-confidence auto-`Won't fix`" path stays for genuinely-mistaken bot claims (non-existent function, repeated finding), not for design-call disagreements.
-- **Step 6.4** documents `cr reply-many` with a "Batch fan-out for the one-commit-closed-N-threads case" paragraph explaining when to prefer it over per-thread `cr reply` (identical body across threads; mixed bodies fall back to per-thread). Step 6.1 documents `--compact` for batch-triage runs.
+- **SKILL.md Step 5 `summary-only` route** now exits with a verbatim re-invoke nudge ("when you're ready to reply, re-invoke `/coderabbit-threads` so each thread gets its own pause-point") plus a paragraph explicitly forbidding "let's work on them" follow-ups from jumping to code. Closes a real workflow gap surfaced when an agent bypassed Step 6 after a summary-only run and made a behavioral-contract call without prompting the user.
+- **SKILL.md Step 6 contested gate** carves out behavioral-contract disagreements (status code, error vs warn, throw vs return, sync vs async, side effects, etc.) as always-ask. This holds even in `MODE = auto` and even with high confidence. Both options can be defensible, and the choice belongs to the user, not the agent. The "high-confidence auto-`Won't fix`" path stays for genuinely-mistaken bot claims (non-existent function, repeated finding), not for design-call disagreements.
+- **SKILL.md Step 6.4** documents `cr reply-many` with a "Batch fan-out for the one-commit-closed-N-threads case" paragraph explaining when to prefer it over per-thread `cr reply` (identical body across threads; mixed bodies fall back to per-thread). Step 6.1 documents `--compact` for batch-triage runs.
 - **Common Mistakes** gains two entries naming the failure modes that drove the Step 5 / Step 6 edits: "Acting on threads after a `summary-only` exit without re-invoking" and "Making a behavioral-contract call autonomously in `MODE = auto`".
 
 ## [0.5.0] — 2026-05-13
 
 Multi-host expansion. Adds drop-in wrapper files and a one-liner installer for the Tier-2 hosts documented in INSTALLATION.md (Windsurf, Cline, Kilo Code, Continue.dev, Zed), plus matching documentation. No changes to the Claude Code install path or the runbook itself.
 
-### Added — Tier-2 host adapters + installer
+### Added
 
 - **[`adapters/`](adapters/) tree.** Drop-in wrapper files for Tier-2 hosts (Windsurf, Cline, Kilo Code, Continue.dev, Zed). Each wrapper mirrors the host's expected install path (`adapters/<host>/<host-path>/<file>`) and is ≤ 25 lines — they instruct the host agent to read the vendored runbook at runtime (or, for Continue.dev, transclude it via Handlebars `{{{ ./path }}}`).
 - **[`scripts/install-adapter.sh`](scripts/install-adapter.sh).** One-liner installer (`curl -fsSL .../install-adapter.sh | bash -s -- --host=<host>`). Vendors `SKILL.md` + `reference.md` into `<your-repo>/.coderabbit-threads/`, then copies the matching adapter file(s) into the host's expected path. Supports `--target=`, `--ref=`, `--force`, `--help`. Bare invocation also shows help (standard CLI etiquette).
