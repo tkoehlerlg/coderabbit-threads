@@ -8,7 +8,7 @@ All notable changes to `coderabbit-threads` are tracked here. The format follows
 
 ## [0.7.0] — 2026-05-14
 
-Two new CLI subcommands for amending and removing your own posted replies. Reach for them when you spot a typo, posted on the wrong thread, or want to retract before re-posting. No workflow changes.
+Two new CLI primitives that let the agent revise or retract its own posted replies. The conversational loop is iterative: CodeRabbit reacts, commits land, the user changes direction. Without `cr edit` / `cr delete` the agent is stuck with whatever it posted first. With them, a `Fixed in <sha>` reply can backfill the real sha after the commit lands, a `Won't fix` can flip to `Fixed` when the user reconsiders, and a stray paste on the wrong thread cleans up without leaving noise.
 
 ### Added
 

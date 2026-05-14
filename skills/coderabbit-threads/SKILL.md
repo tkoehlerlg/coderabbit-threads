@@ -557,7 +557,7 @@ For each thread in triage order:
 
 5. **Do not resolve at reply time.** The decision to resolve a thread is deferred to Step 7 and gated by `RESOLVE_POLICY`.
 
-6. **Fixing a posted reply — `cr edit` / `cr delete`.** After a reply lands you sometimes need to amend or retract it; both operate on the `comment_id` returned by `cr reply` or `cr reply-many`, not on the `thread_id`.
+6. **Revising a posted reply — `cr edit` / `cr delete`.** A posted reply isn't a one-shot commitment. The loop keeps moving: CodeRabbit reacts, commits land, the user changes direction. Both subcommands let the agent's reply track that evolution. They operate on the `comment_id` returned by `cr reply` or `cr reply-many`, not on the `thread_id`.
 
    ```bash
    cr edit   "$pr_url" "$our_comment_id" "Fixed in $sha by adding await on subscribeAll."
@@ -566,12 +566,12 @@ For each thread in triage order:
 
    Reach for `cr edit` when:
    - You posted `Fixed in <sha> by …` before the commit landed and now need to fill in the real sha.
-   - You spotted a typo or a wrong line reference in a reply already posted.
-   - CodeRabbit hasn't replied yet on `cr check` and you want the next bot pass to see the corrected body.
+   - CodeRabbit pushed back on `cr check` and you want to revise the original reply with the additional context, rather than reply twice on the same thread.
+   - The user changed direction mid-loop (e.g. "actually mark this Won't fix") and you've already posted a different template.
 
    Reach for `cr delete` when:
-   - You posted a reply on the wrong thread (e.g. paste error in a manual `cr reply` outside the loop).
-   - You posted `Won't fix` and the user has since reconsidered; you want a clean slate before posting a different template. (`cr edit` works too, but delete-and-repost is easier when the entire response shape is changing.)
+   - You posted a reply on the wrong thread (paste error in a tool loop, or `cr reply` invoked outside the per-thread walk).
+   - The response shape is changing entirely (`Won't fix` → `Fixed`, etc.) and a clean slate is easier than editing the body in place.
 
    Both subcommands operate only on comments the running user authored. GitHub returns 403 otherwise; `cr` surfaces that as an API error at exit code 2 without retry. Don't try to edit or delete a CodeRabbit comment — there's no path to that, and it would be the wrong move anyway.
 
