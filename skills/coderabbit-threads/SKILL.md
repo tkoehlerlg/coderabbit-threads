@@ -2,7 +2,7 @@
 name: coderabbit-threads
 description: Walk, go through, or handle a PR's open CodeRabbit review threads. Inspect what CodeRabbit wants (including its proposed-fix diffs) and reply or respond per-thread in a conversational loop. Use when handling CodeRabbit feedback across multiple review rounds, when threads need per-thread replies (not a bulk PR summary), when you want to read CodeRabbit's proposed fixes without applying them, when you need to surface CodeRabbit pushback or handle the next round of review, or when you want to auto-close threads only after CodeRabbit agrees. Distinct from coderabbit:autofix, which applies fixes and posts one summary comment.
 metadata:
-  version: "0.6.0"
+  version: "0.7.0"
   triggers:
     - coderabbit.?threads
     - cr.?threads
@@ -76,6 +76,8 @@ cr context      <pr-url> <thread-id> [--full | --compact]
 cr proposed-fix <pr-url> <thread-id>
 cr reply        <pr-url> <thread-id> <body>
 cr reply-many   <pr-url> --body <body> <thread-id> [<thread-id>...]
+cr edit         <pr-url> <comment-id> <new-body>
+cr delete       <pr-url> <comment-id>
 cr resolve      <pr-url> <thread-id>
 cr status       <pr-url> [--plain]
 cr check        <pr-url> <thread-id> <our-comment-id>
@@ -554,6 +556,26 @@ For each thread in triage order:
    Exit code is `0` if every reply landed, `2` if any failed. Failed entries still appear in the output array with an `error` field instead of `comment_id`; don't enqueue those — surface them to the user. Only batch when the reply body is *identical*; if even one thread needs a different `<one-line change>`, fall back to per-thread `cr reply`.
 
 5. **Do not resolve at reply time.** The decision to resolve a thread is deferred to Step 7 and gated by `RESOLVE_POLICY`.
+
+6. **Fixing a posted reply — `cr edit` / `cr delete`.** After a reply lands you sometimes need to amend or retract it; both operate on the `comment_id` returned by `cr reply` or `cr reply-many`, not on the `thread_id`.
+
+   ```bash
+   cr edit   "$pr_url" "$our_comment_id" "Fixed in $sha by adding await on subscribeAll."
+   cr delete "$pr_url" "$our_comment_id"
+   ```
+
+   Reach for `cr edit` when:
+   - You posted `Fixed in <sha> by …` before the commit landed and now need to fill in the real sha.
+   - You spotted a typo or a wrong line reference in a reply already posted.
+   - CodeRabbit hasn't replied yet on `cr check` and you want the next bot pass to see the corrected body.
+
+   Reach for `cr delete` when:
+   - You posted a reply on the wrong thread (e.g. paste error in a manual `cr reply` outside the loop).
+   - You posted `Won't fix` and the user has since reconsidered; you want a clean slate before posting a different template. (`cr edit` works too, but delete-and-repost is easier when the entire response shape is changing.)
+
+   Both subcommands operate only on comments the running user authored. GitHub returns 403 otherwise; `cr` surfaces that as an API error at exit code 2 without retry. Don't try to edit or delete a CodeRabbit comment — there's no path to that, and it would be the wrong move anyway.
+
+   If you call `cr edit` *after* `cr check` has already seen CodeRabbit's reaction to the original body, the edit doesn't retroactively re-trigger CodeRabbit. The bot reacted to what was posted at that moment; your edit is for downstream readers (humans on the PR, future scans). If the disagreement is open, posting a *new* reply is usually clearer than editing the original.
 
 ### Step 7 — Poll for CodeRabbit Reaction
 

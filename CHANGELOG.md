@@ -6,6 +6,19 @@ All notable changes to `coderabbit-threads` are tracked here. The format follows
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-05-14
+
+Two new CLI subcommands for amending and removing your own posted replies. Reach for them when you spot a typo, posted on the wrong thread, or want to retract before re-posting. No workflow changes.
+
+### Added
+
+- **`cr edit <pr-url> <comment-id> <new-body>`.** Edit a review-thread reply you posted earlier (typo fix, fill in the real sha after `Fixed in <sha>` was posted ahead of the commit, etc.). Wraps `PATCH /repos/.../pulls/comments/{id}`. Output is `{comment_id, updated_at}` on success. GitHub returns 403 if you don't own the comment; `cr` surfaces that as an `api_die` at exit code 2.
+- **`cr delete <pr-url> <comment-id>`.** Delete a review-thread reply you posted earlier (wrong thread, wrong template, retracting before reposting). Wraps `DELETE /repos/.../pulls/comments/{id}`. Output is `{comment_id, deleted: true}` on success; same 403 / exit 2 behaviour as `cr edit`.
+
+### Changed
+
+- **SKILL.md Step 6.6** documents `cr edit` and `cr delete` with concrete when-to-reach-for-each guidance: edit for "wrong sha", "typo", "wrong line ref"; delete for "wrong thread", "changing response shape entirely". Also flags that an edit *after* `cr check` saw CodeRabbit's reaction does not re-trigger the bot.
+
 ## [0.6.0] — 2026-05-13
 
 CLI polish round driven by a real-PR walkthrough. Adds a batch-reply primitive, a compact `cr context` mode for triaging long thread lists, per-subcommand `--help`, and `cr --version`. Also tightens two workflow gaps in `SKILL.md` surfaced after an agent bypassed the per-thread loop following a `summary-only` exit. No breaking changes.

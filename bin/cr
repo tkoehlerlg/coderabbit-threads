@@ -19,7 +19,7 @@
 
 set -euo pipefail
 
-CR_VERSION="0.6.0"
+CR_VERSION="0.7.0"
 
 # --- helpers ---------------------------------------------------------------
 
@@ -426,6 +426,43 @@ cmd_reply_many() {
   printf '%s\n' "$results"
   [ "$any_failed" -eq 1 ] && exit 2
   exit 0
+}
+
+# Edit an existing review-thread reply (typo fix, re-flow sha after the commit lands, etc.).
+# Output: {comment_id, updated_at} on success. GitHub returns 403 if you don't own
+# the comment; cr surfaces that as an api_die at exit code 2.
+cmd_edit() {
+  case "${1:-}" in -h|--help) echo "usage: cr edit <pr-url> <comment-id> <new-body>"; exit 0 ;; esac
+  local pr_url="${1:-}" comment_id="${2:-}" new_body="${3:-}"
+  [ -z "$pr_url" ] || [ -z "$comment_id" ] || [ -z "$new_body" ] && \
+    die "usage: cr edit <pr-url> <comment-id> <new-body>"
+  parse_pr_url "$pr_url"
+
+  local response rc
+  set +e
+  response=$(gh api -X PATCH "repos/$OWNER/$REPO/pulls/comments/$comment_id" -f body="$new_body" 2>/dev/null)
+  rc=$?
+  set -e
+  [ $rc -ne 0 ] && api_die "edit failed for comment $comment_id (not found, or you don't own this comment)"
+  jq -c '{comment_id: .id, updated_at}' <<<"$response" || api_die "unexpected edit response shape"
+}
+
+# Delete a review-thread reply. Same ownership constraint as cr edit: GitHub
+# returns 403 if you don't own the comment. cr surfaces that as an api_die.
+# Output: {comment_id, deleted: true} on success.
+cmd_delete() {
+  case "${1:-}" in -h|--help) echo "usage: cr delete <pr-url> <comment-id>"; exit 0 ;; esac
+  local pr_url="${1:-}" comment_id="${2:-}"
+  [ -z "$pr_url" ] || [ -z "$comment_id" ] && \
+    die "usage: cr delete <pr-url> <comment-id>"
+  parse_pr_url "$pr_url"
+
+  set +e
+  gh api -X DELETE "repos/$OWNER/$REPO/pulls/comments/$comment_id" --silent 2>/dev/null
+  local rc=$?
+  set -e
+  [ $rc -ne 0 ] && api_die "delete failed for comment $comment_id (not found, or you don't own this comment)"
+  jq -nc --argjson cid "$comment_id" '{comment_id: $cid, deleted: true}'
 }
 
 cmd_resolve() {
@@ -996,6 +1033,8 @@ case "$cmd" in
   threads)      cmd_threads "$@" ;;
   reply)        cmd_reply "$@" ;;
   reply-many)   cmd_reply_many "$@" ;;
+  edit)         cmd_edit "$@" ;;
+  delete)       cmd_delete "$@" ;;
   resolve)      cmd_resolve "$@" ;;
   status)       cmd_status "$@" ;;
   check)        cmd_check "$@" ;;
@@ -1019,6 +1058,8 @@ Usage:
   cr proposed-fix <pr-url> <thread-id>
   cr reply        <pr-url> <thread-id> <body>
   cr reply-many   <pr-url> --body <body> <thread-id> [<thread-id>...]
+  cr edit         <pr-url> <comment-id> <new-body>
+  cr delete       <pr-url> <comment-id>
   cr resolve      <pr-url> <thread-id>
   cr status       <pr-url> [--plain]
   cr check        <pr-url> <thread-id> <our-comment-id>
