@@ -49,6 +49,19 @@ Four places carry the version string — keep them in sync on every release:
 3. `.claude-plugin/plugin.json` → `version`
 4. `.claude-plugin/marketplace.json` → `plugins[0].version`
 
+`marketplace.json` is the easy one to forget (it sits separately from `plugin.json`). It has drifted in past releases — 0.5.0 in the marketplace listing while the plugin reported 0.7.0 — so fresh installs saw a stale version on the listing page. Treat it as load-bearing.
+
+Before tagging, run a sync-check. The four values must be byte-identical:
+
+```bash
+grep -hE '(CR_VERSION=|"version":|version:)' \
+  bin/cr \
+  .claude-plugin/plugin.json \
+  .claude-plugin/marketplace.json \
+  skills/review/SKILL.md \
+  | head -4
+```
+
 `CHANGELOG.md` follows Keep-a-Changelog. Recent entries are the best reference for tone and section structure.
 
 ## Releasing — write-path verification
