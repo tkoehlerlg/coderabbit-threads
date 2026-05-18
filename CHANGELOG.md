@@ -6,6 +6,22 @@ All notable changes to `coderabbit-threads` are tracked here. The format follows
 
 ## [Unreleased]
 
+## [0.9.0] — 2026-05-18
+
+CodeRabbit increasingly acknowledges a reply with a GitHub emoji reaction instead of a follow-up text comment. Up to v0.8.0 the skill only watched for text replies in Step 7, so a thread where CodeRabbit reacted 🚀 ROCKET stayed pinned as `awaiting-bot` and the polling loop never recognised the agreement. Reactions are now first-class signals across the CLI and the skill, with an `agree` / `acknowledge` / `disagree` taxonomy and a reaction-aware conversation-state label.
+
+### Added
+
+- **Reaction signals on `cr check`.** New `state: "bot_reacted"` returned when CodeRabbit reacted on the running user's comment without posting a text follow-up. Output carries `reaction: {content, signal, created_at}` where `signal` is one of `agree` (🚀 ROCKET, 🎉 HOORAY, ❤️ HEART, 👍 THUMBS_UP), `acknowledge` (👀 EYES — the "I saw your reply" stamp CodeRabbit adds within seconds, never agreement on its own), or `disagree` (👎 THUMBS_DOWN, 😕 CONFUSED). 😄 LAUGH and any unknown reaction fall through to `acknowledge` so noise can never auto-resolve a thread. Text replies (`bot_replied`) still take precedence, and the same `reaction` field rides along when one is present so the agent sees both signals.
+- **Reactions on `cr threads`.** Each entry in `comments[].reactions` lists raw GitHub reactions (`content`, `user`, `created_at`). A top-level `last_human_bot_reaction: {content, signal, created_at}` exposes the latest bot reaction on the latest human comment for non-polling consumers (status reports, secondary tooling).
+- **`bot-acked` conversation-state label.** When the conversation would otherwise be `awaiting-bot` but the bot reacted with an `agree`-class emoji on the human's last comment, the thread is now labelled `bot-acked`. A `disagree` reaction flips the same case to `bot-pushback`. `awaiting-bot` is reserved for "no bot response" and "EYES-only ack" (since 👀 alone is not a decision).
+- **`cr threads --filter bot-acked`.** Surfaces only `bot-acked` threads — the ready-to-resolve cleanup set. `actionable` now includes `bot-acked` alongside `bot-pushback`, sorted `bot-pushback` → fresh open → `bot-acked` so multi-round runs handle in-progress conversations first and one-click closures last.
+
+### Changed
+
+- **SKILL.md Step 7 polling loop** branches on `state == bot_reacted`: `signal == agree` applies `RESOLVE_POLICY` the same way an agreeing text reply does, `signal == acknowledge` keeps the entry in the poll queue (👀 alone is not a decision), `signal == disagree` reports as pushback for the next run. A new "What CodeRabbit's responses typically mean" subsection documents the EYES-then-decision lifecycle so the agent does not auto-resolve on a `👀`.
+- **GraphQL inner-fanout retuned.** The reactions query path adds `reactions(first:20){nodes{content user{login} createdAt}}` to each comment. The cap at 20 keeps the per-PR query under GitHub's 500k-node ceiling (100 threads × 100 comments × 20 reactions = 200k) while still capturing every realistic CodeRabbit reaction set.
+
 ## [0.8.0] — 2026-05-18
 
 The skill now lives under the namespace `coderabbit-threads:review`. The new path frees the plugin to host additional skills without name competition, reads as plugin :: action rather than plugin :: plugin, and sidesteps a Claude Code resolver path where same-name pairs (`plugin:skill` with both segments matching) returned only a `Launching skill: …` stub and never injected the SKILL.md body, which left the slash-command router in a retry loop. Natural-language invocation, the slash command `/coderabbit-threads`, and the plugin name are all unchanged.

@@ -5,7 +5,7 @@
 # so the agent never reasons about pagination or raw response shapes.
 #
 # Subcommands:
-#   cr threads <pr-url> [--filter open|all|pushback|outdated|unresolved]
+#   cr threads <pr-url> [--filter open|all|pushback|bot-acked|outdated|unresolved|actionable]
 #   cr reply   <pr-url> <thread-id> <body>
 #   cr resolve <pr-url> <thread-id>
 #   cr status  <pr-url>
@@ -19,7 +19,7 @@
 
 set -euo pipefail
 
-CR_VERSION="0.8.0"
+CR_VERSION="0.9.0"
 
 # --- helpers ---------------------------------------------------------------
 
@@ -91,7 +91,10 @@ fetch_review_threads_raw() {
                   line
                   startLine
                   comments(first:100){
-                    nodes{databaseId body author{login} createdAt}
+                    nodes{
+                      databaseId body author{login} createdAt
+                      reactions(first:20){nodes{content user{login} createdAt}}
+                    }
                   }
                 }
               }
@@ -116,7 +119,10 @@ fetch_review_threads_raw() {
                   line
                   startLine
                   comments(first:100){
-                    nodes{databaseId body author{login} createdAt}
+                    nodes{
+                      databaseId body author{login} createdAt
+                      reactions(first:20){nodes{content user{login} createdAt}}
+                    }
                   }
                 }
               }
@@ -167,6 +173,13 @@ normalize_threads() {
   local pr_url="${1:-}"
   jq -c --arg pr_url "$pr_url" '
     def is_bot($a): ($a == "coderabbitai" or $a == "coderabbit" or $a == "coderabbitai[bot]" or $a == "coderabbit[bot]");
+    # Unknown reactions fall through to acknowledge — never agree.
+    def reaction_signal($content):
+      if ($content == "ROCKET" or $content == "HOORAY" or $content == "HEART" or $content == "THUMBS_UP") then "agree"
+      elif ($content == "EYES") then "acknowledge"
+      elif ($content == "THUMBS_DOWN" or $content == "CONFUSED") then "disagree"
+      else "acknowledge"
+      end;
     def parse_header($body):
       ($body // "" | capture("(?<header>_[^_]+_\\s*\\|\\s*_[^_]+_)"; "g") | .header // "") as $h
       | $h | capture("_(?<type>[^_]+)_\\s*\\|\\s*_(?<sev>[^_]+)_") // {type:null, sev:null};
@@ -228,11 +241,27 @@ normalize_threads() {
          end) as $conv_label
       | (if (.isOutdated == true) and (.isResolved == false) and $conv_label == "untouched"
          then "outdated-unresolved" else $conv_label end) as $non_resolved_label
-      | (if .isResolved then "resolved" else $non_resolved_label end) as $label
+      # Reaction-aware refinement: a bot reaction on the last human comment
+      # counts as the bot response, even without a text follow-up.
+      | (if $non_resolved_label == "awaiting-bot" and $last_human then
+            (($last_human.reactions.nodes // [])
+              | map(select(is_bot(.user.login)))
+              | sort_by(.createdAt) | last) as $r
+            | if $r == null then $non_resolved_label
+              elif (reaction_signal($r.content)) == "agree" then "bot-acked"
+              elif (reaction_signal($r.content)) == "disagree" then "bot-pushback"
+              else $non_resolved_label
+              end
+         else $non_resolved_label end) as $reaction_aware_label
+      | (if .isResolved then "resolved" else $reaction_aware_label end) as $label
       | select($root != null)
       | (if ($pr_url != "" and $root.databaseId != null)
          then ($pr_url + "#discussion_r" + ($root.databaseId | tostring))
          else null end) as $thread_url
+      | (if $last_human then
+            ($last_human.reactions.nodes // []) | map(select(is_bot(.user.login)))
+            | sort_by(.createdAt) | last
+         else null end) as $last_human_bot_reaction
       | {
           thread_id: .id,
           url: $thread_url,
@@ -246,7 +275,13 @@ normalize_threads() {
           title: extract_title($root.body),
           root_body: $root.body,
           ai_prompt: extract_ai_prompt($root.body),
-          comments: ($cs | map({id: .databaseId, author: .author.login, body: .body, created_at: .createdAt})),
+          comments: ($cs | map({
+            id: .databaseId,
+            author: .author.login,
+            body: .body,
+            created_at: .createdAt,
+            reactions: ((.reactions.nodes // []) | map({content, user: .user.login, created_at: .createdAt}))
+          })),
           created_at: ($root.createdAt // null),
           has_proposed_fix: ($bot_cs | map(has_proposed_fix(.body)) | any),
           last_bot_comment_id:      ($last_bot.databaseId // null),
@@ -255,6 +290,11 @@ normalize_threads() {
           last_author_reply_at:     ($last_author.createdAt   // null),
           last_teammate_reply_at:   ($last_teammate.createdAt // null),
           last_running_user_reply_at: ($last_user.createdAt   // null),
+          last_human_bot_reaction: (if $last_human_bot_reaction then {
+            content: $last_human_bot_reaction.content,
+            signal: reaction_signal($last_human_bot_reaction.content),
+            created_at: $last_human_bot_reaction.createdAt
+          } else null end),
           label: $label
         }
     )
@@ -269,15 +309,17 @@ apply_filter() {
     unresolved)  jq -c '[ .[] | select(.is_resolved == false) ]' ;;
     outdated)    jq -c '[ .[] | select(.is_outdated == true and .is_resolved == false) ]' ;;
     pushback)    jq -c '[ .[] | select(.label == "bot-pushback" and .is_resolved == false) ]' ;;
-    # actionable: everything `open` returns, plus unresolved bot-pushback threads
-    # that became outdated in a later round (otherwise lost from `open`). Sort
-    # bot-pushback first so multi-round runs see the conversation-in-progress
-    # threads before the fresh ones.
+    bot-acked)   jq -c '[ .[] | select(.label == "bot-acked" and .is_resolved == false) ]' ;;
+    # Sort: bot-pushback (needs attention) → fresh open → bot-acked (cleanup).
     actionable) jq -c '
                   [ .[] | select(.is_resolved == false
-                                 and (.is_outdated == false or .label == "bot-pushback")) ]
-                  | sort_by(if .label == "bot-pushback" then 0 else 1 end)' ;;
-    *) die "unknown --filter: '$filter' (expected: open|all|unresolved|outdated|pushback|actionable)" ;;
+                                 and (.is_outdated == false
+                                      or .label == "bot-pushback"
+                                      or .label == "bot-acked")) ]
+                  | sort_by(if .label == "bot-pushback" then 0
+                            elif .label == "bot-acked" then 2
+                            else 1 end)' ;;
+    *) die "unknown --filter: '$filter' (expected: open|all|unresolved|outdated|pushback|bot-acked|actionable)" ;;
   esac
 }
 
@@ -330,7 +372,7 @@ cmd_threads() {
   local pr_url="" filter="open" since_ref=""
   while [ $# -gt 0 ]; do
     case "$1" in
-      -h|--help) echo "usage: cr threads <pr-url> [--filter open|all|unresolved|outdated|pushback|actionable] [--since <ref>]"; exit 0 ;;
+      -h|--help) echo "usage: cr threads <pr-url> [--filter open|all|unresolved|outdated|pushback|bot-acked|actionable] [--since <ref>]"; exit 0 ;;
       --filter) filter="${2:-}"; shift 2 ;;
       --filter=*) filter="${1#--filter=}"; shift ;;
       --since) since_ref="${2:-}"; shift 2 ;;
@@ -341,7 +383,7 @@ cmd_threads() {
         shift ;;
     esac
   done
-  [ -z "$pr_url" ] && die "usage: cr threads <pr-url> [--filter open|all|unresolved|outdated|pushback|actionable] [--since <ref>]"
+  [ -z "$pr_url" ] && die "usage: cr threads <pr-url> [--filter open|all|unresolved|outdated|pushback|bot-acked|actionable] [--since <ref>]"
   parse_pr_url "$pr_url"
   local since_iso=""
   if [ -n "$since_ref" ]; then
@@ -931,20 +973,40 @@ cmd_check() {
     -f query='query($id:ID!){
       node(id:$id){
         ... on PullRequestReviewThread{
-          comments(first:100){nodes{databaseId body author{login} createdAt}}
+          comments(first:100){
+            nodes{
+              databaseId body author{login} createdAt
+              reactions(first:50){nodes{content user{login} createdAt}}
+            }
+          }
         }
       }
     }' 2>/dev/null) || api_die "check query failed"
 
+  # Text reply wins over reaction; reaction only counted on our own comment.
   jq -c --arg our "$our_id" '
     def is_bot($a): ($a == "coderabbitai" or $a == "coderabbit" or $a == "coderabbitai[bot]" or $a == "coderabbit[bot]");
+    def reaction_signal($content):
+      if ($content == "ROCKET" or $content == "HOORAY" or $content == "HEART" or $content == "THUMBS_UP") then "agree"
+      elif ($content == "EYES") then "acknowledge"
+      elif ($content == "THUMBS_DOWN" or $content == "CONFUSED") then "disagree"
+      else "acknowledge"
+      end;
     (.data.node.comments.nodes // []) as $cs
     | ($cs | map(select((.databaseId|tostring) == $our)) | first // null) as $ours
     | if $ours == null then {state: "awaiting", error: "our_comment_id not found on thread"}
       else
         ($cs | map(select(is_bot(.author.login) and .createdAt > $ours.createdAt)) | last // null) as $later
-        | if $later == null then {state: "awaiting"}
-          else {state: "bot_replied", comment: {id: $later.databaseId, author: $later.author.login, body: $later.body, created_at: $later.createdAt}}
+        | (($ours.reactions.nodes // []) | map(select(is_bot(.user.login))) | sort_by(.createdAt) | last // null) as $bot_react
+        | if $later != null then
+            {
+              state: "bot_replied",
+              comment: {id: $later.databaseId, author: $later.author.login, body: $later.body, created_at: $later.createdAt},
+              reaction: (if $bot_react then {content: $bot_react.content, signal: reaction_signal($bot_react.content), created_at: $bot_react.createdAt} else null end)
+            }
+          elif $bot_react != null then
+            {state: "bot_reacted", reaction: {content: $bot_react.content, signal: reaction_signal($bot_react.content), created_at: $bot_react.createdAt}}
+          else {state: "awaiting"}
           end
       end' <<<"$response"
 }
@@ -1073,10 +1135,11 @@ Usage:
 
 Filters for `cr threads` (default: open):
   open        unresolved AND not outdated  (the default actionable set)
-  actionable  open ∪ unresolved bot-pushback (even if outdated), pushback first
+  actionable  open ∪ unresolved bot-pushback ∪ unresolved bot-acked (even if outdated); pushback → fresh → bot-acked
   unresolved  unresolved, including outdated threads
   outdated    bot considered them possibly-fixed but they're still unresolved
-  pushback    threads where the bot replied AFTER your last reply
+  pushback    threads where the bot replied AFTER your last reply (or reacted disagree)
+  bot-acked   bot agreed via reaction without a text follow-up; ready to resolve
   all         every CodeRabbit thread on the PR (no filter)
 
 --since <ref> for `cr threads` — drop threads created before <ref>. Accepts:

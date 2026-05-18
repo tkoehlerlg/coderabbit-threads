@@ -28,10 +28,11 @@ Fetch all CodeRabbit review threads on the PR, fully paginated, filtered, normal
 | Filter | Threads included |
 |--------|-------------------|
 | `open` (default) | `is_resolved == false && is_outdated == false` |
-| `actionable` | `open` ∪ unresolved `bot-pushback` (even if outdated). Sorted with `bot-pushback` first. |
+| `actionable` | `open` ∪ unresolved `bot-pushback` ∪ unresolved `bot-acked` (even if outdated). Sorted `bot-pushback` → fresh open → `bot-acked`. |
 | `unresolved` | `is_resolved == false` (includes outdated) |
 | `outdated` | `is_outdated == true && is_resolved == false` |
 | `pushback` | `label == "bot-pushback"` |
+| `bot-acked` | `label == "bot-acked"` — bot agreed via reaction, ready to resolve |
 | `all` | every CodeRabbit thread |
 
 `actionable` is the right filter for **second-and-later runs on a long-lived PR**: it surfaces in-progress bot conversations (pushback) first, even when those threads got marked outdated by a later push, and otherwise behaves like `open`. Reach for it when the user re-runs the skill after a follow-up commit on a PR that already had a review pass.
@@ -70,8 +71,9 @@ Bad input — a string that matches none of the three forms, or a SHA that isn't
     "root_body": "<markdown of bot's first comment>",
     "ai_prompt": "<🤖 Prompt for AI Agents section, with CodeRabbit's auto-fix preamble stripped>",
     "comments": [
-      { "id": 12345, "author": "coderabbitai", "body": "...", "created_at": "2026-05-12T14:32:00Z" },
-      { "id": 12346, "author": "tkoehlerlg",  "body": "...", "created_at": "2026-05-12T14:40:00Z" }
+      { "id": 12345, "author": "coderabbitai", "body": "...", "created_at": "2026-05-12T14:32:00Z", "reactions": [] },
+      { "id": 12346, "author": "tkoehlerlg",  "body": "...", "created_at": "2026-05-12T14:40:00Z",
+        "reactions": [{ "content": "ROCKET", "user": "coderabbitai[bot]", "created_at": "2026-05-12T14:45:00Z" }] }
     ],
     "created_at": "2026-05-12T14:32:00Z",
     "has_proposed_fix": true,
@@ -80,10 +82,24 @@ Bad input — a string that matches none of the three forms, or a SHA that isn't
     "last_human_comment_at": "2026-05-12T14:40:00Z",
     "last_author_reply_at": "2026-05-12T14:40:00Z",
     "last_teammate_reply_at": null,
+    "last_human_bot_reaction": { "content": "ROCKET", "signal": "agree", "created_at": "2026-05-12T14:45:00Z" },
     "label": "bot-pushback"
   }
 ]
 ```
+
+### Reactions
+
+CodeRabbit increasingly acknowledges a reply with a GitHub reaction instead of a text comment. Each entry in `comments[].reactions` is a raw GitHub reaction (`content`, `user`, `created_at`), and `last_human_bot_reaction` is the most recent **bot** reaction on the most recent **human** comment, classified into a `signal`:
+
+| Reaction (`content`) | `signal` | What CodeRabbit means |
+|----------------------|----------|------------------------|
+| `ROCKET`, `HOORAY`, `HEART`, `THUMBS_UP`, `LAUGH` | `agree` | "Shipped / sounds good" — CodeRabbit accepts the reply. Eligible for resolution. |
+| `EYES` | `acknowledge` | "I saw your reply" — neutral receipt. CodeRabbit typically adds this within seconds of every reply, then later either decides (ROCKET) or posts a text response. Treat as still-pending. |
+| `THUMBS_DOWN`, `CONFUSED` | `disagree` | CodeRabbit flagged the reply as insufficient. Read the thread, expect a follow-up comment. |
+| anything else (future GitHub additions) | `acknowledge` | Conservative default — never auto-resolves on an unknown signal. |
+
+Reactions never carry text, so `signal == "agree"` is the strongest "you can close this thread" signal available short of `is_resolved == true`. Reactions on the bot's *own* root comment are ignored — only bot-on-human reactions are surfaced.
 
 `url` is the stable GitHub jump link for the thread (`<pr-url>#discussion_r<root-comment-id>`). Surface it to the user in reply summaries and per-thread reports so they can click straight into the conversation rather than scrolling the PR.
 
@@ -96,8 +112,9 @@ Bad input — a string that matches none of the three forms, or a SHA that isn't
 | Label | Precondition | Condition |
 |-------|--------------|-----------|
 | `resolved` | (always wins when `is_resolved == true`) | `is_resolved == true` |
-| `bot-pushback` | `is_resolved == false` | Bot's last comment is strictly after the most recent human comment |
-| `awaiting-bot` | `is_resolved == false` | Any human's last comment is strictly after the bot's |
+| `bot-pushback` | `is_resolved == false` | Bot's last comment is strictly after the most recent human comment, **or** the bot's last reaction on the human's last comment is `disagree` (👎 / 😕) |
+| `bot-acked` | `is_resolved == false` | Conversation state would be `awaiting-bot`, but the bot's last reaction on the human's last comment is `agree` (🚀 / 🎉 / ❤️ / 👍) — eligible for one-click resolve |
+| `awaiting-bot` | `is_resolved == false` | Any human's last comment is strictly after the bot's, and no bot reaction (or only `acknowledge` / 👀) on that comment |
 | `untouched` | `is_resolved == false` | Only bot comments, no human reply yet |
 | `outdated-unresolved` | `is_resolved == false` | `is_outdated == true` (bot likely considered the code fixed but the thread wasn't closed) |
 
@@ -389,15 +406,15 @@ The `--confirm` flag on the explicit-allowance pair is a belt-and-suspenders CLI
 cr check <pr-url> <thread-id> <our-comment-id>
 ```
 
-Check whether a CodeRabbit comment exists on the given thread after `our-comment-id`. Used by Step 7 polling.
+Check whether CodeRabbit has responded to `our-comment-id` on the given thread — either with a follow-up text comment, or with an emoji reaction directly on our comment. Used by Step 7 polling.
 
-### Output — bot has not replied yet
+### Output — bot has not responded yet
 
 ```json
 { "state": "awaiting" }
 ```
 
-### Output — bot replied
+### Output — bot replied with text
 
 ```json
 {
@@ -407,11 +424,29 @@ Check whether a CodeRabbit comment exists on the given thread after `our-comment
     "author": "coderabbitai",
     "body": "...",
     "created_at": "2026-05-12T14:50:00Z"
-  }
+  },
+  "reaction": { "content": "EYES", "signal": "acknowledge", "created_at": "2026-05-12T14:49:55Z" }
 }
 ```
 
-`cr check` deliberately does **not** classify agreement vs. pushback. Read `comment.body` and decide in the agent — bash keyword heuristics on natural-language sentiment are unreliable.
+`cr check` deliberately does **not** classify agreement vs. pushback from `comment.body`. Read it and decide in the agent — bash keyword heuristics on natural-language sentiment are unreliable. The bundled `reaction` field is null when no bot reaction sits on our comment; when present, it's the same shape as `last_human_bot_reaction` on `cr threads`.
+
+### Output — bot reacted only (no text reply)
+
+```json
+{
+  "state": "bot_reacted",
+  "reaction": { "content": "ROCKET", "signal": "agree", "created_at": "2026-05-12T14:50:00Z" }
+}
+```
+
+Reaction-only is now CodeRabbit's most common positive ack. The `signal` follows the same taxonomy as the threads output:
+
+- `agree` (`ROCKET`, `HOORAY`, `HEART`, `THUMBS_UP`, `LAUGH`) — eligible for resolve under `RESOLVE_POLICY`.
+- `acknowledge` (`EYES`) — CodeRabbit saw the reply but hasn't decided. Keep polling. EYES typically lands within seconds of every reply, so seeing it alone doesn't mean anything yet.
+- `disagree` (`THUMBS_DOWN`, `CONFUSED`) — surface as pushback, leave open.
+
+Text replies (`bot_replied`) always win over reactions, because text carries more information; the `reaction` field is still attached so the agent can see both signals.
 
 ### Output — `our-comment-id` not found
 

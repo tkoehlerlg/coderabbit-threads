@@ -2,7 +2,7 @@
 name: review
 description: Walk, go through, or handle a PR's open CodeRabbit review threads. Inspect what CodeRabbit wants (including its proposed-fix diffs) and reply or respond per-thread in a conversational loop. Use when handling CodeRabbit feedback across multiple review rounds, when threads need per-thread replies (not a bulk PR summary), when you want to read CodeRabbit's proposed fixes without applying them, when you need to surface CodeRabbit pushback or handle the next round of review, or when you want to auto-close threads only after CodeRabbit agrees. Distinct from coderabbit:autofix, which applies fixes and posts one summary comment.
 metadata:
-  version: "0.8.0"
+  version: "0.9.0"
   triggers:
     - coderabbit.?threads
     - cr.?threads
@@ -198,7 +198,8 @@ Each array entry is one thread. Read these fields; **do not invent GraphQL-nativ
 | `severity` / `issue_type` / `title` | string? | Parsed from the bot's root-comment header |
 | `ai_prompt` | string | Distilled summary of what CodeRabbit wants — already stripped of CodeRabbit's auto-fix preamble |
 | `has_proposed_fix` | bool | If true, `cr proposed-fix` returns the diff |
-| `label` | string | `bot-pushback` / `awaiting-bot` / `untouched` / `outdated-unresolved` / `resolved` |
+| `label` | string | `bot-pushback` / `bot-acked` / `awaiting-bot` / `untouched` / `outdated-unresolved` / `resolved` |
+| `last_human_bot_reaction` | object? | `{content, signal, created_at}` — latest bot reaction on the latest human comment. `signal` ∈ `agree` / `acknowledge` / `disagree`. Drives `bot-acked` / `bot-pushback` label refinement. |
 | `is_resolved` / `is_outdated` | bool | Raw GitHub flags |
 | `created_at` / `last_bot_comment_at` / `last_human_comment_at` | ISO-8601? | Timestamps |
 | `last_author_reply_at` / `last_teammate_reply_at` / `last_running_user_reply_at` | ISO-8601? | Participation fields (see Step 4) |
@@ -239,8 +240,9 @@ cr threads "$pr_url" --filter open --since 2026-05-12T10:00:00Z
 
 | `cr.label` | Meaning |
 |------------|---------|
-| `bot-pushback` | **Open** thread; CodeRabbit's last comment is strictly after the most recent human comment. Bot is responding to or rejecting a reply. |
-| `awaiting-bot` | Open thread; any human's last comment is strictly after the bot's. CodeRabbit hasn't responded yet. |
+| `bot-pushback` | **Open** thread; CodeRabbit's last comment is strictly after the most recent human comment, OR the bot reacted 👎 / 😕 on the human's last comment. Bot is responding to or rejecting a reply. |
+| `bot-acked` | Open thread; CodeRabbit reacted positively (🚀 / 🎉 / ❤️ / 👍) on the human's last comment without posting a text follow-up. Eligible for one-click resolve under `RESOLVE_POLICY`. |
+| `awaiting-bot` | Open thread; any human's last comment is strictly after the bot's. CodeRabbit either hasn't responded yet, or has only added a 👀 EYES "received" reaction (not a decision). |
 | `untouched` | Open thread; only CodeRabbit comments, no human reply. |
 | `outdated-unresolved` | CodeRabbit considered the cited code possibly-fixed but the thread is still unresolved. Possibly a missed thread. |
 | `resolved` | **Closed.** Someone (CodeRabbit or human) marked the thread resolved. Historical record — NOT actionable. |
@@ -581,6 +583,20 @@ For each thread in triage order:
 
 After all replies are posted, poll each queued thread for CodeRabbit's reaction.
 
+#### What CodeRabbit's responses typically mean
+
+CodeRabbit responds in two ways: an emoji **reaction** on your comment, or a follow-up **text comment** on the thread. Both surface through `cr check`. The reaction taxonomy:
+
+| Signal | Reactions | What CodeRabbit means | What to do |
+|--------|-----------|------------------------|------------|
+| `agree` | 🚀 ROCKET, 🎉 HOORAY, ❤️ HEART, 👍 THUMBS_UP, 😄 LAUGH | "Shipped / sounds good." Accepts your reply. | Treat as agreement. Apply `RESOLVE_POLICY`. |
+| `acknowledge` | 👀 EYES | "I saw your reply." Neutral receipt. CodeRabbit adds this to almost every reply within seconds, *before* deciding. | Keep polling — this is not a decision yet. |
+| `disagree` | 👎 THUMBS_DOWN, 😕 CONFUSED | "Reply is insufficient." | Surface as pushback; expect a follow-up text comment. |
+
+The common lifecycle is: you reply → CodeRabbit adds 👀 within seconds → minutes-to-hours later it adds 🚀 *or* posts a text comment (agreement / pushback / follow-up question). Do **not** treat 👀 alone as agreement — it's the bot's "received" stamp, not its verdict.
+
+Text comments win over reactions in `cr check` (the bot has more to say), but `cr check` still surfaces the reaction alongside the comment so you can see both signals.
+
 #### With `ScheduleWakeup` available (Claude Code only)
 
 `ScheduleWakeup` is a Claude Code primitive that re-invokes the agent after a delay. Use it (60 s minimum interval) to come back and check. Schedule the next wake until either:
@@ -596,6 +612,14 @@ while read -r entry; do
   state=$(jq -r '.state' <<<"$result")
   case "$state" in
     awaiting) keep_in_queue ;;
+    bot_reacted)
+      signal=$(jq -r '.reaction.signal' <<<"$result")
+      case "$signal" in
+        agree)        apply_resolve_policy "$thread_id" "(reaction-only ack)"; drop_from_queue ;;
+        acknowledge)  keep_in_queue ;;   # 👀 alone — bot hasn't decided yet
+        disagree)     report "🔁 thread $thread_id — CodeRabbit reacted with disagreement, will surface on next run"; drop_from_queue ;;
+      esac
+      ;;
     bot_replied)
       # Read CodeRabbit's reply body and decide.
       body=$(jq -r '.comment.body' <<<"$result")
