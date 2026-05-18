@@ -9,17 +9,17 @@ A Claude Code plugin distributing one skill (`coderabbit-threads`) and its bundl
 ## Repository layout
 
 - [bin/cr](bin/cr) — the bash CLI (single ~1100-line file). Source of truth for all GitHub API interaction. The plugin loader puts `bin/` on `$PATH` while enabled, so the skill calls `cr` by bare name.
-- [skills/coderabbit-threads/SKILL.md](skills/coderabbit-threads/SKILL.md) — the 8-step runbook the agent follows. Frontmatter `metadata.triggers` is a regex list consumed by superpowers-style tooling; other hosts match on `description`.
-- [skills/coderabbit-threads/reference.md](skills/coderabbit-threads/reference.md) — full subcommand signatures, JSON output schemas, filter semantics, exit codes, and the conversation-state `label` taxonomy. Read this before changing `cr`'s output shape.
+- [skills/review/SKILL.md](skills/review/SKILL.md) — the 8-step runbook the agent follows. Skill is namespaced `coderabbit-threads:review` (plugin name ≠ skill name, to avoid a Claude Code resolver collision seen with same-name pairs). Frontmatter `metadata.triggers` is a regex list consumed by superpowers-style tooling; other hosts match on `description`.
+- [skills/review/reference.md](skills/review/reference.md) — full subcommand signatures, JSON output schemas, filter semantics, exit codes, and the conversation-state `label` taxonomy. Read this before changing `cr`'s output shape.
 - [commands/coderabbit-threads.md](commands/coderabbit-threads.md) — thin slash-command router that resolves a PR URL and hands off to the skill.
 - [adapters/](adapters/) — wrappers for Tier-2 hosts (Windsurf, Cline, Kilo Code, Continue.dev, Zed) that don't natively load `SKILL.md`. Each wrapper just instructs its host to read the vendored `.coderabbit-threads/SKILL.md`.
 - [scripts/install-adapter.sh](scripts/install-adapter.sh) — one-liner installer for Tier-2 hosts; vendors `SKILL.md` + `reference.md` into the target repo.
-- [.claude-plugin/plugin.json](.claude-plugin/plugin.json), [.claude-plugin/marketplace.json](.claude-plugin/marketplace.json) — plugin metadata. Version bumps live here AND in `SKILL.md` frontmatter AND in `bin/cr`'s `CR_VERSION`.
+- [.claude-plugin/plugin.json](.claude-plugin/plugin.json), [.claude-plugin/marketplace.json](.claude-plugin/marketplace.json) — plugin metadata. Version bumps live in **both** files (they have historically drifted) plus `SKILL.md` frontmatter plus `bin/cr`'s `CR_VERSION`.
 
 ## How the pieces fit
 
 1. The user invokes `/coderabbit-threads` (or natural language). The slash command in `commands/` resolves a PR URL and hands off.
-2. The skill in `skills/coderabbit-threads/SKILL.md` runs an 8-step workflow: verify push state → resolve PR → check status → fetch + triage threads → ask `MODE` (together / auto / summary-only) and `RESOLVE_POLICY` (auto / ask / never) → per-thread reply loop → poll for CodeRabbit reactions → terminal summary.
+2. The skill in `skills/review/SKILL.md` runs an 8-step workflow: verify push state → resolve PR → check status → fetch + triage threads → ask `MODE` (together / auto / summary-only) and `RESOLVE_POLICY` (auto / ask / never) → per-thread reply loop → poll for CodeRabbit reactions → terminal summary.
 3. Every GitHub API call goes through `cr`. The skill never constructs raw GraphQL inline. If you're adding a new operation, add a `cmd_*` function in `bin/cr` first, document the schema in `reference.md`, then surface it in `SKILL.md`.
 
 The skill explicitly does **not** post a PR-level summary comment (that's `coderabbit:autofix`'s pattern) and does **not** resolve a thread before CodeRabbit reacts. Both are listed in `SKILL.md`'s "Common Mistakes" / "Red Flags" sections.
@@ -42,11 +42,12 @@ The skill explicitly does **not** post a PR-level summary comment (that's `coder
 
 ## Versioning and releases
 
-Three places carry the version string — keep them in sync on every release:
+Four places carry the version string — keep them in sync on every release:
 
 1. `bin/cr` → `CR_VERSION="x.y.z"`
-2. `skills/coderabbit-threads/SKILL.md` frontmatter → `metadata.version`
+2. `skills/review/SKILL.md` frontmatter → `metadata.version`
 3. `.claude-plugin/plugin.json` → `version`
+4. `.claude-plugin/marketplace.json` → `plugins[0].version`
 
 `CHANGELOG.md` follows Keep-a-Changelog. Recent entries are the best reference for tone and section structure.
 

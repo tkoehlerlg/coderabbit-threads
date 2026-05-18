@@ -6,7 +6,7 @@ allowed-tools: "Bash(gh:*), Bash(cr:*), Bash(git:*)"
 
 # CodeRabbit Threads — Review
 
-This is a thin router. Resolve the PR URL, then invoke the `coderabbit-threads` skill with it. Do not restate the skill's workflow.
+This is a thin router. Resolve the PR URL, then invoke the `coderabbit-threads:review` skill with it. Do not restate the skill's workflow.
 
 ## Context (resolved silently)
 
@@ -27,4 +27,4 @@ In order:
 
 ## Invoke
 
-Once the URL is resolved, **invoke the `coderabbit-threads` skill** with it. Stop here. The skill owns status pre-flight, triage, the walk-through loop, replies, and polling.
+Once the URL is resolved, **invoke the `coderabbit-threads:review` skill** with it. Stop here. The skill owns status pre-flight, triage, the walk-through loop, replies, and polling.

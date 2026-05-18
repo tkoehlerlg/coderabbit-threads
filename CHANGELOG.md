@@ -6,6 +6,15 @@ All notable changes to `coderabbit-threads` are tracked here. The format follows
 
 ## [Unreleased]
 
+## [0.8.0] — 2026-05-18
+
+The skill now lives under the namespace `coderabbit-threads:review`. The new path frees the plugin to host additional skills without name competition, reads as plugin :: action rather than plugin :: plugin, and sidesteps a Claude Code resolver path where same-name pairs (`plugin:skill` with both segments matching) returned only a `Launching skill: …` stub and never injected the SKILL.md body, which left the slash-command router in a retry loop. Natural-language invocation, the slash command `/coderabbit-threads`, and the plugin name are all unchanged.
+
+### Changed
+
+- **Skill renamed from `coderabbit-threads` to `review`.** Frontmatter `name:` field and the on-disk directory both move (`skills/coderabbit-threads/` → `skills/review/`). Anyone who hard-wired the fully-qualified skill identifier `coderabbit-threads:coderabbit-threads` needs to switch to `coderabbit-threads:review`. The slash command, plugin name, and host adapters under `adapters/` keep their current names — those don't go through Claude Code's `plugin:skill` resolver.
+- **`marketplace.json` plugin version tracks `plugin.json` again.** It had drifted (0.5.0 in the marketplace listing while the installed plugin reported 0.7.0), so fresh installs saw a stale version on the listing page even when they pulled the current plugin body. `CLAUDE.md` now lists `marketplace.json` as the fourth version-sync site alongside `bin/cr`, the SKILL frontmatter, and `plugin.json`.
+
 ## [0.7.0] — 2026-05-14
 
 Two new CLI primitives that let the agent revise or retract its own posted replies. The conversational loop is iterative: CodeRabbit reacts, commits land, the user changes direction. Without `cr edit` / `cr delete` the agent is stuck with whatever it posted first. With them, a `Fixed in <sha>` reply can backfill the real sha after the commit lands, a `Won't fix` can flip to `Fixed` when the user reconsiders, and a stray paste on the wrong thread cleans up without leaving noise.
