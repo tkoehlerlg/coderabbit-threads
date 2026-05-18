@@ -268,7 +268,7 @@ Use `last_running_user_reply_at` as the canonical answer to "did *I* engage on t
 
 **Important — resolved threads are not pushback even if CodeRabbit's last comment is after the human's.** Resolution means the conversation was explicitly closed; bot-after-human ordering on a resolved thread is just the final state of a finished exchange, not a request for more action. Skip them this run unless the user explicitly asks you to revisit history.
 
-Since `cr threads --filter open` (the default in Step 3) excludes resolved threads, you normally won't see them during a regular run. The `resolved` label matters when you (or the user) explicitly fetch with `--filter all` or `--filter unresolved`.
+Since `cr threads --filter open` (the default in Step 3) returns every unresolved thread — including outdated ones GitHub auto-collapses — you'll see `outdated-unresolved` threads in a regular run. The `resolved` label only shows when you explicitly fetch with `--filter all`.
 
 On top of `cr.label`, read the cited file/line and add your own `triage` label about the current code state:
 

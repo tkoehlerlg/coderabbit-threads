@@ -305,8 +305,7 @@ apply_filter() {
   local filter="$1"
   case "$filter" in
     all)         jq -c '.' ;;
-    open)        jq -c '[ .[] | select(.is_resolved == false and .is_outdated == false) ]' ;;
-    unresolved)  jq -c '[ .[] | select(.is_resolved == false) ]' ;;
+    open|unresolved) jq -c '[ .[] | select(.is_resolved == false) ]' ;;
     outdated)    jq -c '[ .[] | select(.is_outdated == true and .is_resolved == false) ]' ;;
     pushback)    jq -c '[ .[] | select(.label == "bot-pushback" and .is_resolved == false) ]' ;;
     bot-acked)   jq -c '[ .[] | select(.label == "bot-acked" and .is_resolved == false) ]' ;;
@@ -1134,9 +1133,9 @@ Usage:
   cr pause        <pr-url> --confirm  # @coderabbitai pause        (explicit-allowance — stops CodeRabbit reviewing future pushes)
 
 Filters for `cr threads` (default: open):
-  open        unresolved AND not outdated  (the default actionable set)
-  actionable  open ∪ unresolved bot-pushback ∪ unresolved bot-acked (even if outdated); pushback → fresh → bot-acked
-  unresolved  unresolved, including outdated threads
+  open        unresolved (including outdated) — same set GitHub's UI calls "open". Alias: unresolved
+  unresolved  alias for open
+  actionable  unresolved AND (not outdated OR bot-pushback OR bot-acked); sorted pushback → fresh → bot-acked
   outdated    bot considered them possibly-fixed but they're still unresolved
   pushback    threads where the bot replied AFTER your last reply (or reacted disagree)
   bot-acked   bot agreed via reaction without a text follow-up; ready to resolve

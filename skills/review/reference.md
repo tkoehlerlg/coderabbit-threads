@@ -27,15 +27,15 @@ Fetch all CodeRabbit review threads on the PR, fully paginated, filtered, normal
 
 | Filter | Threads included |
 |--------|-------------------|
-| `open` (default) | `is_resolved == false && is_outdated == false` |
-| `actionable` | `open` ∪ unresolved `bot-pushback` ∪ unresolved `bot-acked` (even if outdated). Sorted `bot-pushback` → fresh open → `bot-acked`. |
-| `unresolved` | `is_resolved == false` (includes outdated) |
+| `open` (default) | `is_resolved == false` — same set GitHub's UI calls "open"; includes outdated threads (they are still unresolved). Alias: `unresolved`. |
+| `unresolved` | Alias for `open`. |
+| `actionable` | unresolved AND (not outdated OR `bot-pushback` OR `bot-acked`). Sorted `bot-pushback` → fresh → `bot-acked`. Drops outdated-untouched threads. |
 | `outdated` | `is_outdated == true && is_resolved == false` |
 | `pushback` | `label == "bot-pushback"` |
 | `bot-acked` | `label == "bot-acked"` — bot agreed via reaction, ready to resolve |
 | `all` | every CodeRabbit thread |
 
-`actionable` is the right filter for **second-and-later runs on a long-lived PR**: it surfaces in-progress bot conversations (pushback) first, even when those threads got marked outdated by a later push, and otherwise behaves like `open`. Reach for it when the user re-runs the skill after a follow-up commit on a PR that already had a review pass.
+`actionable` is the right filter for **second-and-later runs on a long-lived PR**: it surfaces in-progress bot conversations (pushback) first, even when those threads got marked outdated by a later push, drops outdated-untouched threads (no human ever engaged), and sorts the rest pushback → fresh → bot-acked. Reach for it when the user re-runs the skill after a follow-up commit on a PR that already had a review pass.
 
 Threads whose root comment is not authored by CodeRabbit (`coderabbitai`, `coderabbitai[bot]`, `coderabbit`, `coderabbit[bot]`) are excluded unconditionally.
 
