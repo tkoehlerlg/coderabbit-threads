@@ -66,7 +66,7 @@ Posted (auto): "Out-of-scope of this PR — should be tracked separately."
 Polling for CodeRabbit reactions (every 60s, up to 5 min):
   ✅ PRT_a — CodeRabbit reacted 🚀 (agree), auto-resolved
   ✅ PRT_b — CodeRabbit replied "Resolved" (agree), auto-resolved
-  ⏳ PRT_c — CodeRabbit reacted 👀 (acknowledge), still polling
+  ⏳ PRT_c — CodeRabbit reacted 👀 (pending), still polling
   🔁 PRT_d — CodeRabbit pushed back, will surface on next run
 
 Handled 4 threads. Posted 4 replies (3 autonomous, 1 user-chosen).
@@ -112,7 +112,7 @@ The skill follows an 8-step workflow. The full runbook is in [`skills/coderabbit
 | 4 | Triage threads    | Label each open thread: `bot-pushback`, `still-applies`, `likely-fixed`, `unclear`, `out-of-scope` |
 | 5 | Confirm + policy  | Show compact table; ask **together vs auto**; ask self-close policy (auto / ask / never) |
 | 6 | Per-thread loop   | Autonomous for `likely-fixed` / `out-of-scope` (both modes); **fix-then-reply** for `still-applies` in auto mode (or `fix-now` in together mode); high-confidence `contested` posts `Won't fix` autonomously; ask user for `unclear` / `bot-pushback` always |
-| 7 | Poll for reaction | Watch each thread for CodeRabbit's response — either a follow-up text comment or an emoji reaction (🚀 ROCKET = agree, 👀 EYES = "received, still deciding", 👎 / 😕 = pushback). Apply self-close policy on agreement; keep polling on `acknowledge`; surface on pushback. |
+| 7 | Poll for reaction | Watch each thread for CodeRabbit's response — either a follow-up text comment or an emoji reaction (🚀 ROCKET = agree, 👀 EYES = "received, still deciding", 👎 / 😕 = pushback). Apply self-close policy on agreement; keep polling on `pending`; surface on pushback. |
 | 8 | Summary           | Terminal-only summary. **No PR-level comment is ever posted.**        |
 
 All GitHub API interaction goes through the bundled `cr` CLI. The skill never constructs raw GraphQL inline.
