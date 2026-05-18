@@ -5,7 +5,7 @@
 # so the agent never reasons about pagination or raw response shapes.
 #
 # Subcommands:
-#   cr threads <pr-url> [--filter open|all|pushback|bot-agreed|outdated|unresolved|actionable]
+#   cr threads <pr-url> [--filter open|all|pushback|bot-agreed|outdated|actionable]
 #   cr reply   <pr-url> <thread-id> <body>
 #   cr resolve <pr-url> <thread-id>
 #   cr status  <pr-url>
@@ -305,20 +305,18 @@ apply_filter() {
   local filter="$1"
   case "$filter" in
     all)         jq -c '.' ;;
-    open|unresolved) jq -c '[ .[] | select(.is_resolved == false) ]' ;;
+    open)        jq -c '[ .[] | select(.is_resolved == false) ]' ;;
     outdated)    jq -c '[ .[] | select(.is_outdated == true and .is_resolved == false) ]' ;;
     pushback)    jq -c '[ .[] | select(.label == "bot-pushback" and .is_resolved == false) ]' ;;
-    bot-agreed)   jq -c '[ .[] | select(.label == "bot-agreed" and .is_resolved == false) ]' ;;
-    # Sort: bot-pushback (needs attention) → fresh open → bot-agreed (cleanup).
-    actionable) jq -c '
-                  [ .[] | select(.is_resolved == false
-                                 and (.is_outdated == false
-                                      or .label == "bot-pushback"
-                                      or .label == "bot-agreed")) ]
+    bot-agreed)  jq -c '[ .[] | select(.label == "bot-agreed" and .is_resolved == false) ]' ;;
+    # Same set as `open`; sort: bot-pushback → fresh → outdated-unresolved → bot-agreed.
+    actionable)  jq -c '
+                  [ .[] | select(.is_resolved == false) ]
                   | sort_by(if .label == "bot-pushback" then 0
-                            elif .label == "bot-agreed" then 2
+                            elif .label == "bot-agreed" then 3
+                            elif .is_outdated then 2
                             else 1 end)' ;;
-    *) die "unknown --filter: '$filter' (expected: open|all|unresolved|outdated|pushback|bot-agreed|actionable)" ;;
+    *) die "unknown --filter: '$filter' (expected: open|all|outdated|pushback|bot-agreed|actionable)" ;;
   esac
 }
 
@@ -371,7 +369,7 @@ cmd_threads() {
   local pr_url="" filter="open" since_ref=""
   while [ $# -gt 0 ]; do
     case "$1" in
-      -h|--help) echo "usage: cr threads <pr-url> [--filter open|all|unresolved|outdated|pushback|bot-agreed|actionable] [--since <ref>]"; exit 0 ;;
+      -h|--help) echo "usage: cr threads <pr-url> [--filter open|all|outdated|pushback|bot-agreed|actionable] [--since <ref>]"; exit 0 ;;
       --filter) filter="${2:-}"; shift 2 ;;
       --filter=*) filter="${1#--filter=}"; shift ;;
       --since) since_ref="${2:-}"; shift 2 ;;
@@ -382,7 +380,7 @@ cmd_threads() {
         shift ;;
     esac
   done
-  [ -z "$pr_url" ] && die "usage: cr threads <pr-url> [--filter open|all|unresolved|outdated|pushback|bot-agreed|actionable] [--since <ref>]"
+  [ -z "$pr_url" ] && die "usage: cr threads <pr-url> [--filter open|all|outdated|pushback|bot-agreed|actionable] [--since <ref>]"
   parse_pr_url "$pr_url"
   local since_iso=""
   if [ -n "$since_ref" ]; then
@@ -573,12 +571,13 @@ cmd_status() {
   pr_author=$(jq -r '.data.repository.pullRequest.author.login // ""' <<<"$response")
   running_user=$(gh_running_user)
 
-  # Count OPEN review threads whose root comment is NOT authored by CodeRabbit.
+  # Count OPEN (unresolved, including outdated) review threads whose root comment
+  # is NOT authored by CodeRabbit. Matches `cr threads --filter open`'s semantic.
   # The skill ignores these but surfaces the count so users know they exist.
   human_count=$(jq -r '
     def is_bot($a): ($a == "coderabbitai" or $a == "coderabbit" or $a == "coderabbitai[bot]" or $a == "coderabbit[bot]");
     (.data.repository.pullRequest.reviewThreads.nodes // [])
-    | map(select(.isResolved == false and .isOutdated == false))
+    | map(select(.isResolved == false))
     | map(select((.comments.nodes // [])[0]?.author?.login // "" | is_bot(.) | not))
     | length' <<<"$response")
 
@@ -1133,12 +1132,11 @@ Usage:
   cr pause        <pr-url> --confirm  # @coderabbitai pause        (explicit-allowance — stops CodeRabbit reviewing future pushes)
 
 Filters for `cr threads` (default: open):
-  open        unresolved (including outdated) — same set GitHub's UI calls "open". Alias: unresolved
-  unresolved  alias for open
-  actionable  unresolved AND (not outdated OR bot-pushback OR bot-agreed); sorted pushback → fresh → bot-agreed
-  outdated    bot considered them possibly-fixed but they're still unresolved
+  open        unresolved (including outdated) — same set GitHub's UI calls "open"
+  actionable  same set as open, sorted: bot-pushback → fresh → outdated-unresolved → bot-agreed
+  outdated    unresolved AND outdated — bot considered them possibly-fixed but they're still open
   pushback    threads where the bot replied AFTER your last reply (or reacted disagree)
-  bot-agreed   bot agreed via reaction without a text follow-up; ready to resolve
+  bot-agreed  bot agreed via reaction without a text follow-up; ready to resolve
   all         every CodeRabbit thread on the PR (no filter)
 
 --since <ref> for `cr threads` — drop threads created before <ref>. Accepts:

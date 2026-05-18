@@ -18,7 +18,7 @@ Resource-not-found (a PR or thread that doesn't exist) is **exit 1**, not 2 — 
 ## `cr threads`
 
 ```
-cr threads <pr-url> [--filter open|all|unresolved|outdated|pushback|bot-agreed|actionable] [--since <ref>]
+cr threads <pr-url> [--filter open|all|outdated|pushback|bot-agreed|actionable] [--since <ref>]
 ```
 
 Fetch all CodeRabbit review threads on the PR, fully paginated, filtered, normalized.
@@ -27,15 +27,14 @@ Fetch all CodeRabbit review threads on the PR, fully paginated, filtered, normal
 
 | Filter | Threads included |
 |--------|-------------------|
-| `open` (default) | `is_resolved == false` — same set GitHub's UI calls "open"; includes outdated threads (they are still unresolved). Alias: `unresolved`. |
-| `unresolved` | Alias for `open`. |
-| `actionable` | unresolved AND (not outdated OR `bot-pushback` OR `bot-agreed`). Sorted `bot-pushback` → fresh → `bot-agreed`. Drops outdated-untouched threads. |
-| `outdated` | `is_outdated == true && is_resolved == false` |
+| `open` (default) | `is_resolved == false` — same set GitHub's UI calls "open"; includes outdated threads (they are still unresolved). |
+| `actionable` | Same set as `open`, sorted: `bot-pushback` → fresh → `outdated-unresolved` → `bot-agreed`. Use when you want a triage-ordered view instead of GitHub-ordered. |
+| `outdated` | `is_outdated == true && is_resolved == false` — outdated subset of `open`, for audit runs. |
 | `pushback` | `label == "bot-pushback"` |
 | `bot-agreed` | `label == "bot-agreed"` — bot agreed via reaction, ready to resolve |
-| `all` | every CodeRabbit thread |
+| `all` | every CodeRabbit thread (including resolved) |
 
-`actionable` is the right filter for **second-and-later runs on a long-lived PR**: it surfaces in-progress bot conversations (pushback) first, even when those threads got marked outdated by a later push, drops outdated-untouched threads (no human ever engaged), and sorts the rest pushback → fresh → bot-agreed. Reach for it when the user re-runs the skill after a follow-up commit on a PR that already had a review pass.
+`actionable` is the right filter for **second-and-later runs on a long-lived PR**: it returns every open thread (same set as `open`) but sorted by priority — `bot-pushback` first (live conversations), then fresh threads needing attention, then `outdated-unresolved` (likely-fixed audit cases), then `bot-agreed` (one-click cleanup). Reach for it when the user re-runs the skill after a follow-up commit on a PR that already had a review pass.
 
 Threads whose root comment is not authored by CodeRabbit (`coderabbitai`, `coderabbitai[bot]`, `coderabbit`, `coderabbit[bot]`) are excluded unconditionally.
 
@@ -340,7 +339,7 @@ Format: `<state> · <draft|ready> · <relative-time> [· bot reviewing] [· paus
 - `mode`: CodeRabbit's review posture — one of `reactive` (CodeRabbit reviews every push), `paused` (CodeRabbit has been paused on this PR), `unknown` (no signal). Detected by walking CodeRabbit comments/reviews newest-first for the markers `review paused by coderabbit.ai`, `review resumed by coderabbit.ai`, or normal-review markers (`Actionable comments posted`, `Recent review info`, etc.). Newest match wins.
 - `paused_reason`: When `mode == "paused"`, the first line of CodeRabbit's `## Reviews paused` body (e.g. "It looks like this branch is under active development."). `null` otherwise.
 - `pr_author`: GitHub login of the PR author. Used by the skill to differentiate the user's own replies from teammate comments. `null` if not resolvable.
-- `human_open_thread_count`: Count of open (unresolved + not-outdated) review threads whose root comment is **not** authored by CodeRabbit. The skill ignores these threads but surfaces the count so users know inline reviews from teammates exist.
+- `human_open_thread_count`: Count of open (unresolved, including outdated) review threads whose root comment is **not** authored by CodeRabbit. Matches `cr threads --filter open`'s semantic. The skill ignores these threads but surfaces the count so users know inline reviews from teammates exist.
 
 ### Pre-flight pattern
 

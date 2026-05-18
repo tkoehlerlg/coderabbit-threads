@@ -71,7 +71,7 @@ This skill ships with a bash CLI at `bin/cr` that wraps GitHub's GraphQL API. Us
 Subcommands (full signatures in `reference.md`):
 
 ```bash
-cr threads      <pr-url> [--filter open|all|unresolved|outdated|pushback|actionable] [--since <ref>]
+cr threads      <pr-url> [--filter open|all|outdated|pushback|bot-agreed|actionable] [--since <ref>]
 cr context      <pr-url> <thread-id> [--full | --compact]
 cr proposed-fix <pr-url> <thread-id>
 cr reply        <pr-url> <thread-id> <body>

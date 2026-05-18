@@ -10,17 +10,26 @@ All notable changes to `coderabbit-threads` are tracked here. The format follows
 
 CodeRabbit increasingly acknowledges a reply with a GitHub emoji reaction instead of a follow-up text comment. Reactions are now first-class signals across the CLI and the skill, with an `agree` / `pending` / `disagree` taxonomy and a reaction-aware conversation-state label that lets the polling loop close threads on a 🚀 and keep waiting on a 👀.
 
+The 0.9.0 cycle also aligned `cr`'s open-set semantics with what GitHub shows the user. Every unresolved thread now lands in the default fetch, including the ones GitHub auto-collapses as outdated, and the `outdated-unresolved` label distinguishes them in the categorized summary. `actionable` returns the same set sorted by triage priority, so multi-round walks no longer have to choose between "see everything" and "see it in order".
+
 ### Added
 
 - **Reaction signals on `cr check`.** New `state: "bot_reacted"` returned when CodeRabbit reacted on the running user's comment without posting a text follow-up. Output carries `reaction: {content, signal, created_at}` where `signal` is one of `agree` (🚀 ROCKET, 🎉 HOORAY, ❤️ HEART, 👍 THUMBS_UP), `pending` (👀 EYES — the "I saw your reply" stamp CodeRabbit adds within seconds, never agreement on its own), or `disagree` (👎 THUMBS_DOWN, 😕 CONFUSED). 😄 LAUGH and any unknown reaction fall through to `pending` so noise can never auto-resolve a thread. Text replies (`bot_replied`) still take precedence, and the same `reaction` field rides along when one is present so the agent sees both signals.
 - **Reactions on `cr threads`.** Each entry in `comments[].reactions` lists raw GitHub reactions (`content`, `user`, `created_at`). A top-level `last_bot_reaction: {content, signal, created_at}` exposes the latest bot reaction on the latest human comment for non-polling consumers (status reports, secondary tooling).
 - **`bot-agreed` conversation-state label.** When the conversation would otherwise be `awaiting-bot` but the bot reacted with an `agree`-class emoji on the human's last comment, the thread is now labelled `bot-agreed`. A `disagree` reaction flips the same case to `bot-pushback`. `awaiting-bot` is reserved for "no bot response" and `pending`-only acks (👀 alone is not a decision).
-- **`cr threads --filter bot-agreed`.** Surfaces only `bot-agreed` threads — the ready-to-resolve cleanup set. `actionable` now includes `bot-agreed` alongside `bot-pushback`, sorted `bot-pushback` → fresh open → `bot-agreed` so multi-round runs handle in-progress conversations first and one-click closures last.
+- **`cr threads --filter bot-agreed`.** Surfaces only `bot-agreed` threads — the ready-to-resolve cleanup set. The same threads also appear in `--filter open` and sort last under `--filter actionable`.
 
 ### Changed
 
 - **SKILL.md Step 7 polling loop** branches on `state == bot_reacted`: `signal == agree` applies `RESOLVE_POLICY` the same way an agreeing text reply does, `signal == pending` keeps the entry in the poll queue (👀 alone is not a decision), `signal == disagree` reports as pushback for the next run. A new "What CodeRabbit's responses typically mean" subsection documents the EYES-then-decision lifecycle so the agent does not auto-resolve on a `👀`.
 - **GraphQL inner-fanout retuned.** The reactions query path adds `reactions(first:20){nodes{content user{login} createdAt}}` to each comment. The cap at 20 keeps the per-PR query under GitHub's 500k-node ceiling (100 threads × 100 comments × 20 reactions = 200k) while still capturing every realistic CodeRabbit reaction set.
+- **`cr threads --filter open` now returns every unresolved thread, including outdated.** Previously the filter was `is_resolved == false AND is_outdated == false`, which silently dropped threads CodeRabbit had marked possibly-fixed but no human ever closed. The new semantic matches what GitHub's UI calls "open"; `outdated-unresolved` threads land in the default fetch with their distinguishing label so the agent can audit them rather than miss them.
+- **`cr threads --filter actionable` is now `open` plus a triage sort.** Returns the same full set as `open`, sorted `bot-pushback` → fresh → `outdated-unresolved` → `bot-agreed`. Reach for it on second-and-later runs when you want a priority-ordered view rather than GitHub's chronological order. The previous narrower behaviour (dropping outdated-untouched threads) is gone now that `open` itself covers the full set.
+- **`cr status` → `human_open_thread_count` widened to match.** Counts every unresolved human-rooted thread (including outdated), consistent with `cr threads --filter open`. The Step 5 categorized summary's human-initiated line now lines up with the thread count the agent shows for CodeRabbit.
+
+### Removed
+
+- **`cr threads --filter unresolved` removed.** After the `open` widening it was a pure alias and just doubled the doc surface. Callers should use `--filter open`. The removed filter exits `1` with the standard `unknown --filter` error.
 
 ### Fixed
 
