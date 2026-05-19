@@ -19,7 +19,7 @@
 
 set -euo pipefail
 
-CR_VERSION="0.9.0"
+CR_VERSION="0.9.1"
 
 # --- helpers ---------------------------------------------------------------
 
@@ -181,12 +181,20 @@ normalize_threads() {
       else "pending"
       end;
     def parse_header($body):
-      ($body // "" | capture("(?<header>_[^_]+_\\s*\\|\\s*_[^_]+_)"; "g") | .header // "") as $h
-      | $h | capture("_(?<type>[^_]+)_\\s*\\|\\s*_(?<sev>[^_]+)_") // {type:null, sev:null};
+      # Same empty-stream trap as extract_ai_prompt — wrap capture-with-g in
+      # [...][0] so a missing severity header yields "" instead of an empty
+      # stream that would drop the whole thread. The second capture is also
+      # wrapped to avoid the no-match raise when $h is "".
+      (($body // "") | [capture("(?<header>_[^_]+_\\s*\\|\\s*_[^_]+_)"; "g")][0].header // "") as $h
+      | ($h | [capture("_(?<type>[^_]+)_\\s*\\|\\s*_(?<sev>[^_]+)_")][0] // {type:null, sev:null});
     def extract_ai_prompt($body):
-      ($body // "")
-      | capture("<details>\\s*<summary>[^<]*Prompt for AI Agents[^<]*</summary>(?<p>[\\s\\S]*?)</details>"; "g")
-      | .p // ""
+      ($body // "") as $b
+      # Wrap capture-with-g in [...] so an absent "Prompt for AI Agents" block
+      # yields null instead of an empty stream — empty stream would drop the
+      # whole thread out of the surrounding map(...). When CodeRabbit omits the
+      # AI-prompt section (it does for some quick-win threads), fall back to
+      # the full body so callers still get the actionable text.
+      | ($b | [capture("<details>\\s*<summary>[^<]*Prompt for AI Agents[^<]*</summary>(?<p>[\\s\\S]*?)</details>"; "g")][0].p // $b)
       | gsub("^\\s+|\\s+$"; "")
       # CodeRabbit wraps the ai-prompt payload in a fenced code block. Unwrap
       # it so the preamble strip below sees plain text, not the fence markers.
@@ -852,9 +860,28 @@ EOF
 > not auto-fix. Route the response through `cr reply` after user approval.
 
 EOF
-    if [ -n "$ai_prompt" ]; then
+    # ai_prompt is the distilled "Prompt for AI Agents" section when the root
+    # bot comment has one; otherwise normalize_threads falls back to the full
+    # root body. Detect the source from root_body (NOT last_bot_body, which is
+    # the most recent bot comment in multi-round threads and rarely contains
+    # the AI-prompt section even when the root does).
+    local root_body
+    root_body=$(jq -r '.root_body // ""' <<<"$thread")
+    if printf '%s' "$root_body" | grep -qiE '<summary>[^<]*Prompt for AI Agents'; then
+      ai_prompt_source="distilled"
+    else
+      ai_prompt_source="body-fallback"
+    fi
+    if [ -n "$ai_prompt" ] && [ "$ai_prompt_source" = "distilled" ]; then
       cat <<EOF
 _Distilled from the bot's "🤖 Prompt for AI Agents" section:_
+
+$ai_prompt
+
+EOF
+    elif [ -n "$ai_prompt" ]; then
+      cat <<EOF
+_No "🤖 Prompt for AI Agents" section on this thread — showing the full bot comment:_
 
 $ai_prompt
 

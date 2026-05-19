@@ -68,7 +68,7 @@ Bad input — a string that matches none of the three forms, or a SHA that isn't
     "issue_type": "bug",
     "title": "Authorization logic inverted",
     "root_body": "<markdown of bot's first comment>",
-    "ai_prompt": "<🤖 Prompt for AI Agents section, with CodeRabbit's auto-fix preamble stripped>",
+    "ai_prompt": "<🤖 Prompt for AI Agents section, auto-fix preamble stripped — falls back to the full bot body when no AI-prompt section is present>",
     "comments": [
       { "id": 12345, "author": "coderabbitai", "body": "...", "created_at": "2026-05-12T14:32:00Z", "reactions": [] },
       { "id": 12346, "author": "tkoehlerlg",  "body": "...", "created_at": "2026-05-12T14:40:00Z",
@@ -102,7 +102,7 @@ Reactions never carry text, so `signal == "agree"` is the strongest "you can clo
 
 `url` is the stable GitHub jump link for the thread (`<pr-url>#discussion_r<root-comment-id>`). Surface it to the user in reply summaries and per-thread reports so they can click straight into the conversation rather than scrolling the PR.
 
-`ai_prompt` has CodeRabbit's generic auto-fix instruction line (`"Verify each finding against current code. Fix only still-valid issues..."`) stripped at extraction time. What remains is the actionable summary only.
+`ai_prompt` has CodeRabbit's generic auto-fix instruction line (`"Verify each finding against current code. Fix only still-valid issues..."`) stripped at extraction time. What remains is the actionable summary only. When CodeRabbit omits the AI-prompt section entirely (some quick-win threads do), `ai_prompt` falls back to the full root bot comment so callers always have actionable text — `cr context` detects the fallback and labels the section honestly.
 
 ### Computed `label` values
 
@@ -138,7 +138,7 @@ Combine with the top-level `pr_author` and `running_user` from `cr status` and t
 
 - `severity` / `issue_type`: parsed from the bot's root-comment header, format `_<type>_ | _<severity>_`. Returns `null` if header isn't present.
 - `title`: first line of the root comment, with surrounding `**` markdown stripped.
-- `ai_prompt`: contents of `<details><summary>🤖 Prompt for AI Agents</summary>...</details>` if present, else empty string.
+- `ai_prompt`: contents of `<details><summary>🤖 Prompt for AI Agents</summary>...</details>` if present, else the full root bot comment as a fallback (never empty when a bot comment exists).
 - `comments[].id`: the comment's `databaseId` (numeric REST ID) — pass this as `our-comment-id` to `cr check`.
 
 ## `cr context`

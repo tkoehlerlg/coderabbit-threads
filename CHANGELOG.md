@@ -6,6 +6,19 @@ All notable changes to `coderabbit-threads` are tracked here. The format follows
 
 ## [Unreleased]
 
+## [0.9.1] — 2026-05-19
+
+`cr threads` now surfaces CodeRabbit threads that ship without an explicit "Prompt for AI Agents" section — the kind CodeRabbit emits for quick-win findings. Until now those threads silently disappeared from the listing, so a real PR could carry an unresolved critical-severity thread that the skill never saw. The fix is in the normalizer's empty-stream handling; the same defect existed in the severity-header parser and is closed in this release.
+
+### Changed
+
+- **`ai_prompt` falls back to the full root bot comment when no AI-prompt section is present.** Quick-win threads omit the `<details><summary>🤖 Prompt for AI Agents</summary>` block. Previously `ai_prompt` was empty for those; now it contains the actionable text from the root comment so callers always have something to reason over. `cr context` reads the source from `root_body` and labels the section honestly: `Distilled from the bot's "🤖 Prompt for AI Agents" section:` when the section was extracted, or `No "🤖 Prompt for AI Agents" section on this thread — showing the full bot comment:` when the body fallback fired.
+
+### Fixed
+
+- **Threads without an AI-prompt section no longer disappear from `cr threads`.** `extract_ai_prompt` used `capture(re; "g") | .p // ""`, which emits an empty stream on no match. The empty stream short-circuited the surrounding `map(...)`, silently filtering the entire thread out of every `--filter`. Reproducible on a real PR where one unresolved high-severity thread on a Rust file vanished from `cr threads --filter open` while remaining visible in the GitHub UI.
+- **Same empty-stream trap in `parse_header` closed.** The severity/issue-type header parser used the same `capture(re; "g") | .header // ""` shape and would have dropped any future CodeRabbit thread that emitted without the `_<type>_ | _<severity>_` header line. No observable regression today (every CodeRabbit thread carries that header); closed as a latent landmine.
+
 ## [0.9.0] — 2026-05-18
 
 CodeRabbit increasingly acknowledges a reply with a GitHub emoji reaction instead of a follow-up text comment. Reactions are now first-class signals across the CLI and the skill, with an `agree` / `pending` / `disagree` taxonomy and a reaction-aware conversation-state label that lets the polling loop close threads on a 🚀 and keep waiting on a 👀.
