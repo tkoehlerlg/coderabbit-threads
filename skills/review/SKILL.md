@@ -2,7 +2,7 @@
 name: review
 description: Walk, go through, or handle a PR's open CodeRabbit review threads. Inspect what CodeRabbit wants (including its proposed-fix diffs) and reply or respond per-thread in a conversational loop. Use when handling CodeRabbit feedback across multiple review rounds, when threads need per-thread replies (not a bulk PR summary), when you want to read CodeRabbit's proposed fixes without applying them, when you need to surface CodeRabbit pushback or handle the next round of review, or when you want to auto-close threads only after CodeRabbit agrees. Distinct from coderabbit:autofix, which applies fixes and posts one summary comment.
 metadata:
-  version: "0.9.1"
+  version: "0.10.0"
   triggers:
     - coderabbit.?threads
     - cr.?threads
@@ -184,7 +184,19 @@ threads=$(cr threads "$pr_url" --filter open)
 count=$(jq 'length' <<<"$threads")
 ```
 
-**If `count == 0`:** Inform "No open CodeRabbit threads on PR." EXIT.
+**If `count == 0`:** Read `bot_review` from `cr status` to give the user a richer terminal state than "nothing to do":
+
+```bash
+br_state=$(jq -r '.bot_review.state // "none"' <<<"$pr_status")
+br_stale=$(jq -r '.bot_review.stale // false' <<<"$pr_status")
+```
+
+- `br_state == "APPROVED" && br_stale == false` → "✅ No open CodeRabbit threads. CodeRabbit approved the PR." EXIT.
+- `br_state == "APPROVED" && br_stale == true` → "⚠️ No open CodeRabbit threads, but CodeRabbit's approval is stale (commits landed after it). Run `cr review` to get a fresh pass." EXIT.
+- `br_state == "CHANGES_REQUESTED"` → "⚠️ No open CodeRabbit threads, but CodeRabbit's last review requested changes. Look at the PR-level review body before merging." EXIT.
+- Otherwise → "No open CodeRabbit threads on PR." EXIT.
+
+The `stale` flag is the same signal as `in_progress` and `mode == "paused"`, on a different axis: it says "the formal verdict you see is from an older commit". Reading them together — `bot_review.stale` (verdict outdated), `in_progress` (CR re-reviewing now), `mode == "paused"` (waiting for trigger) — lets the user decide whether the approval stamp is worth anything right now.
 
 #### `cr threads` field cheatsheet
 

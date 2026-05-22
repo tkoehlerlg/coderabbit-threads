@@ -19,7 +19,7 @@
 
 set -euo pipefail
 
-CR_VERSION="0.9.1"
+CR_VERSION="0.10.0"
 
 # --- helpers ---------------------------------------------------------------
 
@@ -551,9 +551,10 @@ cmd_status() {
           isDraft
           merged
           closed
+          headRefOid
           author{login}
           comments(last:50){nodes{author{login} body createdAt}}
-          reviews(last:50){nodes{author{login} body submittedAt}}
+          reviews(last:50){nodes{author{login} body state submittedAt commit{oid}}}
           reviewThreads(first:100){
             nodes{
               isResolved
@@ -571,13 +572,28 @@ cmd_status() {
   fi
   [ $rc -ne 0 ] && api_die "status query failed (gh exit $rc)"
 
-  local pr_state pr_is_draft pr_merged pr_closed pr_author running_user human_count
+  local pr_state pr_is_draft pr_merged pr_closed pr_author pr_head_oid running_user human_count
   pr_state=$(jq -r '.data.repository.pullRequest.state' <<<"$response")
   pr_is_draft=$(jq -r '.data.repository.pullRequest.isDraft' <<<"$response")
   pr_merged=$(jq -r '.data.repository.pullRequest.merged' <<<"$response")
   pr_closed=$(jq -r '.data.repository.pullRequest.closed' <<<"$response")
   pr_author=$(jq -r '.data.repository.pullRequest.author.login // ""' <<<"$response")
+  pr_head_oid=$(jq -r '.data.repository.pullRequest.headRefOid // ""' <<<"$response")
   running_user=$(gh_running_user)
+
+  # PENDING reviews have no submittedAt and can't be sorted with the rest; filter
+  # at the GraphQL-projection step rather than after sort_by to avoid a null in
+  # the sort key.
+  local bot_review
+  bot_review=$(jq -c --arg head "$pr_head_oid" '
+    def is_bot($a): ($a == "coderabbitai" or $a == "coderabbit" or $a == "coderabbitai[bot]" or $a == "coderabbit[bot]");
+    [.data.repository.pullRequest.reviews.nodes[]?
+      | select(is_bot(.author.login) and .submittedAt != null and .state != "PENDING")
+      | {state: .state, submitted_at: .submittedAt, commit_sha: (.commit.oid // null)}]
+    | sort_by(.submitted_at) | last
+    | if . == null then null
+      else . + {stale: (($head != "") and (.commit_sha != null) and (.commit_sha != $head))}
+      end' <<<"$response")
 
   # Count OPEN (unresolved, including outdated) review threads whose root comment
   # is NOT authored by CodeRabbit. Matches `cr threads --filter open`'s semantic.
@@ -690,7 +706,29 @@ cmd_status() {
     else
       human_seg=""
     fi
-    printf '%s · %s%s%s%s%s\n' "$pr_state" "$draft_seg" "$age_word" "$ip_word" "$mode_seg" "$human_seg"
+    # COMMENTED fires on every push and DISMISSED is a rare human action — both
+    # are noise in the one-liner, so only APPROVED / CHANGES_REQUESTED surface here.
+    local review_seg=""
+    if [ "$bot_review" != "null" ]; then
+      local br_state br_stale
+      br_state=$(jq -r '.state // ""' <<<"$bot_review")
+      br_stale=$(jq -r '.stale // false' <<<"$bot_review")
+      case "$br_state" in
+        APPROVED)
+          if [ "$br_stale" = "true" ]; then
+            review_seg=" · CR approved (stale)"
+          else
+            review_seg=" · CR approved"
+          fi ;;
+        CHANGES_REQUESTED)
+          if [ "$br_stale" = "true" ]; then
+            review_seg=" · CR requested changes (stale)"
+          else
+            review_seg=" · CR requested changes"
+          fi ;;
+      esac
+    fi
+    printf '%s · %s%s%s%s%s%s\n' "$pr_state" "$draft_seg" "$age_word" "$ip_word" "$mode_seg" "$review_seg" "$human_seg"
     return
   fi
 
@@ -701,6 +739,7 @@ cmd_status() {
       --argjson ip "$in_progress" --arg la "$last_active" \
       --arg mode "$mode" --arg reason "$paused_reason" \
       --arg author "$pr_author" --arg user "$running_user" --argjson hc "$human_count" \
+      --argjson br "$bot_review" \
       '{
         state: $state,
         is_draft: $is_draft,
@@ -713,7 +752,8 @@ cmd_status() {
         paused_reason: (if $reason == "" then null else $reason end),
         pr_author: (if $author == "" then null else $author end),
         running_user: (if $user == "" then null else $user end),
-        human_open_thread_count: $hc
+        human_open_thread_count: $hc,
+        bot_review: $br
       }'
   else
     jq -nc \
@@ -722,6 +762,7 @@ cmd_status() {
       --argjson ip "$in_progress" --arg la "$last_active" --argjson m "$mins" \
       --arg mode "$mode" --arg reason "$paused_reason" \
       --arg author "$pr_author" --arg user "$running_user" --argjson hc "$human_count" \
+      --argjson br "$bot_review" \
       '{
         state: $state,
         is_draft: $is_draft,
@@ -734,7 +775,8 @@ cmd_status() {
         paused_reason: (if $reason == "" then null else $reason end),
         pr_author: (if $author == "" then null else $author end),
         running_user: (if $user == "" then null else $user end),
-        human_open_thread_count: $hc
+        human_open_thread_count: $hc,
+        bot_review: $br
       }'
   fi
 }

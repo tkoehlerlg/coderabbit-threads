@@ -6,6 +6,16 @@ All notable changes to `coderabbit-threads` are tracked here. The format follows
 
 ## [Unreleased]
 
+## [0.10.0] — 2026-05-22
+
+`cr status` now surfaces CodeRabbit's formal PR-level review state, so the skill can tell at a glance whether the PR is approved, has changes requested, or is sitting on a stale verdict from before the latest push. The new `bot_review` block on `cr status` gives the agent a clean signal next to the existing `in_progress` (CR re-reviewing) and `mode == paused` (CR waiting on a manual trigger) signals.
+
+### Added
+
+- **`bot_review` field on `cr status`.** An object `{state, submitted_at, commit_sha, stale}` carrying the latest CodeRabbit PR-level review, or `null` if CodeRabbit has never submitted a formal review on the PR. `state` is one of `APPROVED`, `CHANGES_REQUESTED`, `COMMENTED`, or `DISMISSED` (the GitHub review states; `PENDING` is filtered out). `stale` is `true` when the review's `commit_sha` differs from the PR's current head — i.e. commits landed after the review and the verdict is out of date.
+- **Approval signal in `cr status --plain`.** The one-liner now appends `· CR approved` or `· CR requested changes` (with a `(stale)` suffix when the verdict is from before the current head). Only `APPROVED` and `CHANGES_REQUESTED` are surfaced — `COMMENTED` lands on every push and `DISMISSED` is a rare human action, so both are too noisy for the one-liner.
+- **SKILL.md Step 3 reads `bot_review` on the zero-open-threads exit.** Instead of a flat "No open CodeRabbit threads on PR.", the skill now tells the user whether CodeRabbit approved (and whether that approval is stale) or requested changes. The `stale` axis is documented next to `in_progress` and `mode == paused` so the agent can reason about "is the bot's verdict current?" across all three signals.
+
 ## [0.9.1] — 2026-05-19
 
 `cr threads` now surfaces CodeRabbit threads that ship without an explicit "Prompt for AI Agents" section — the kind CodeRabbit emits for quick-win findings. Until now those threads silently disappeared from the listing, so a real PR could carry an unresolved critical-severity thread that the skill never saw. The fix is in the normalizer's empty-stream handling; the same defect existed in the severity-header parser and is closed in this release.

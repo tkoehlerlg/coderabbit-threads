@@ -306,10 +306,13 @@ Check the PR's state and CodeRabbit activity. Default output is JSON; `--plain` 
 OPEN · ready · last bot activity 12d ago
 OPEN · ready · last bot activity 14m ago · paused (branch under active development)
 OPEN · ready · last bot activity 21h ago · bot reviewing · 3 human-initiated thread(s)
+OPEN · ready · last bot activity 2h ago · CR approved
+OPEN · ready · last bot activity 1h ago · CR approved (stale)
+OPEN · ready · last bot activity 30m ago · CR requested changes
 CLOSED · draft · no bot activity
 ```
 
-Format: `<state> · <draft|ready> · <relative-time> [· bot reviewing] [· paused (<reason>)] [· N human-initiated thread(s)]`. Each suffix is conditional. Time scales to minutes / hours / days. Use this in shell prompts, quick checks, or pre-flight messages in the workflow.
+Format: `<state> · <draft|ready> · <relative-time> [· bot reviewing] [· paused (<reason>)] [· CR approved | CR requested changes [(stale)]] [· N human-initiated thread(s)]`. Each suffix is conditional. Time scales to minutes / hours / days. Only the formal review states `APPROVED` and `CHANGES_REQUESTED` are surfaced here — every push generates a noisy `COMMENTED` review and `DISMISSED` is a rare human action, so both are omitted from the one-liner. Use this in shell prompts, quick checks, or pre-flight messages in the workflow.
 
 ### Output
 
@@ -325,7 +328,13 @@ Format: `<state> · <draft|ready> · <relative-time> [· bot reviewing] [· paus
   "mode": "reactive",
   "paused_reason": null,
   "pr_author": "tkoehlerlg",
-  "human_open_thread_count": 0
+  "human_open_thread_count": 0,
+  "bot_review": {
+    "state": "APPROVED",
+    "submitted_at": "2026-05-21T08:48:48Z",
+    "commit_sha": "48c9d77cea11d8f92231b43671fa10fff0b70c65",
+    "stale": false
+  }
 }
 ```
 
@@ -340,6 +349,13 @@ Format: `<state> · <draft|ready> · <relative-time> [· bot reviewing] [· paus
 - `paused_reason`: When `mode == "paused"`, the first line of CodeRabbit's `## Reviews paused` body (e.g. "It looks like this branch is under active development."). `null` otherwise.
 - `pr_author`: GitHub login of the PR author. Used by the skill to differentiate the user's own replies from teammate comments. `null` if not resolvable.
 - `human_open_thread_count`: Count of open (unresolved, including outdated) review threads whose root comment is **not** authored by CodeRabbit. Matches `cr threads --filter open`'s semantic. The skill ignores these threads but surfaces the count so users know inline reviews from teammates exist.
+- `bot_review`: Latest CodeRabbit PR-level review, or `null` if CodeRabbit has never submitted a formal review. Fields:
+  - `state` — GitHub review state: `APPROVED`, `CHANGES_REQUESTED`, `COMMENTED`, or `DISMISSED`. Pending (unsubmitted) reviews are excluded.
+  - `submitted_at` — ISO-8601 timestamp when the review was submitted.
+  - `commit_sha` — the head SHA at the time of the review.
+  - `stale` — `true` when `commit_sha` differs from the PR's current head (commits landed after the review, so the verdict is out of date). `false` when the review is current.
+
+  **Three orthogonal "is the bot's verdict current?" signals** — read them together: `bot_review.stale` (commits landed after the last formal review), `in_progress` (CodeRabbit is re-reviewing *right now*), and `mode == "paused"` (CodeRabbit is waiting on a manual `@coderabbitai resume` / `review`). A stale `APPROVED` on a paused PR is the "many commits since approval, no automatic re-review coming" case; the skill should prompt for `cr review` instead of trusting the stamp.
 
 ### Pre-flight pattern
 
