@@ -6,6 +6,8 @@ All notable changes to `coderabbit-threads` are tracked here. The format follows
 
 ## [Unreleased]
 
+## [0.11.0] — 2026-07-05
+
 ## [0.10.0] — 2026-05-22
 
 `cr status` now surfaces CodeRabbit's formal PR-level review state, so the skill can tell at a glance whether the PR is approved, has changes requested, or is sitting on a stale verdict from before the latest push. The new `bot_review` block on `cr status` gives the agent a clean signal next to the existing `in_progress` (CR re-reviewing) and `mode == paused` (CR waiting on a manual trigger) signals.
