@@ -58,6 +58,8 @@ The `metadata.triggers` block in the frontmatter is a regex matcher consumed by 
 
 Each reply is a short factual statement (`Fixed in <sha>`, `Won't fix: <reason>`, `Out-of-scope`). No multi-paragraph defenses. No attempts to persuade CodeRabbit. The skill posts replies inline on each thread, polls for CodeRabbit's reaction, and only resolves a thread once CodeRabbit agrees.
 
+**Replies are inline thread responses, never PR-level review events.** `cr reply` and `cr reply-many` post through GitHub's REST inline-reply path, so a reply lands under the parent CodeRabbit comment and does **not** create a `<user> started a review` row in the PR timeline. Always go through `cr reply` / `cr reply-many` — never post via `gh pr comment` or a raw `addPullRequestReviewThreadReply` GraphQL mutation, both of which surface as PR-level noise.
+
 ## Prerequisites
 
 - `gh` (authenticated): `gh auth status`
@@ -74,7 +76,7 @@ Subcommands (full signatures in `reference.md`):
 cr threads      <pr-url> [--filter open|all|outdated|pushback|bot-agreed|actionable] [--since <ref>]
 cr context      <pr-url> <thread-id> [--full | --compact]
 cr proposed-fix <pr-url> <thread-id>
-cr reply        <pr-url> <thread-id> <body>
+cr reply        <pr-url> <thread-id> <body> [--root-comment-id <id>]
 cr reply-many   <pr-url> --body <body> <thread-id> [<thread-id>...]
 cr edit         <pr-url> <comment-id> <new-body>
 cr delete       <pr-url> <comment-id>
@@ -205,6 +207,7 @@ Each array entry is one thread. Read these fields; **do not invent GraphQL-nativ
 | Field | Type | Notes |
 |-------|------|-------|
 | `thread_id` | string | GraphQL node id — pass to every other `cr` subcommand |
+| `root_comment_db_id` | int? | REST `databaseId` of the thread's root comment. Pass as `cr reply --root-comment-id` to skip a lookup round trip (see Step 6). |
 | `url` | string | Stable jump link `https://github.com/<o>/<r>/pull/<n>#discussion_r<id>` — surface to the user |
 | `file` / `line` / `start_line` | string / int? | Cited location; `line` may be null on file-level threads |
 | `severity` / `issue_type` / `title` | string? | Parsed from the bot's root-comment header |
@@ -551,10 +554,16 @@ For each thread in triage order:
 4. **Post via `cr`:**
 
    ```bash
-   response=$(cr reply "$pr_url" "$thread_id" "$body")
+   # Thread the root_comment_db_id from Step 3's threads JSON to skip a lookup round trip.
+   root_db_id=$(jq -r --arg id "$thread_id" '.[] | select(.thread_id == $id) | .root_comment_db_id' <<<"$threads")
+   response=$(cr reply "$pr_url" "$thread_id" "$body" --root-comment-id "$root_db_id")
    our_comment_id=$(jq -r '.comment_id' <<<"$response")
    echo "$thread_id $our_comment_id" >> "$POLL_QUEUE"
    ```
+
+   `--root-comment-id` is an optimization, not a requirement — `cr reply "$pr_url" "$thread_id" "$body"` resolves the root comment itself with one extra call. `cr reply` posts through the REST inline-reply path, so nothing lands in the PR timeline.
+
+   **If `cr reply` exits 2 with a REST failure, the thread is likely outdated** (GitHub returns 422 when the cited diff hunk no longer applies). Nothing is posted. Don't retry blindly and don't reach for `--allow-graphql-fallback` (that flag re-introduces a PR-timeline review row and is not for skill use). Surface it in Step 8's summary as `⚠️ thread <id> — could not reply (outdated thread)` and let the user handle it manually or `cr edit` an existing reply.
 
    **Batch fan-out for the "one commit closed N threads" case — `cr reply-many`.** When a single mechanical-fix commit addresses several `likely-fixed` (or `still-applies` after a fix-then-reply) threads with the *same* reply body, prefer one `cr reply-many` call over N sequential `cr reply` calls:
 
@@ -678,6 +687,12 @@ CodeRabbit reactions (after polling 5 min):
 Open threads remaining: 2 (1 bot-pushback, 1 likely-fixed)
 ```
 
+Surface any reply failures here too. A `cr reply` exit 2 (REST refused, usually an outdated thread) means nothing was posted:
+
+```
+  ⚠️ thread PRT_d — could not reply (outdated thread); handle in the GitHub UI
+```
+
 ## Sticky Approvals — Don't Ask the Same Question Twice
 
 Whenever the skill prompts the user and gets a `yes` / specific-template answer, **immediately follow up with one extra question**: "Use this answer for the rest of this run?"
@@ -754,6 +769,10 @@ Out-of-scope of this PR — should be tracked separately. (deferring to a separa
 **Posting one PR-level summary comment instead of per-thread replies**
 - Problem: That's autofix's pattern; this skill explicitly posts on each thread.
 - Fix: Always use `cr reply <thread-id>`, never `gh pr comment`.
+
+**Posting a reply via the `addPullRequestReviewThreadReply` GraphQL mutation directly**
+- Problem: That mutation wraps each reply in a new review record, which surfaces as a `<user> started a review` row in the PR timeline. N replies produce N timeline rows — indistinguishable from the agent autonomously starting N reviews.
+- Fix: Always go through `cr reply` / `cr reply-many`, which use the REST inline-reply path. Never set `--allow-graphql-fallback` from the skill.
 
 **Auto-resolving threads after posting a reply**
 - Problem: CodeRabbit can't push back inline if the thread is closed.

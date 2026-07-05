@@ -8,6 +8,19 @@ All notable changes to `coderabbit-threads` are tracked here. The format follows
 
 ## [0.11.0] — 2026-07-05
 
+`cr reply` and `cr reply-many` now post inline thread replies without producing PR-timeline review rows. Previously each reply went through the GraphQL `addPullRequestReviewThreadReply` mutation, which empirically creates a fresh `PullRequestReview` record per call — GitHub renders each as a `<user> started a review` row in the PR timeline, so a single session of N replies left N such rows. Replies are meant to be inline responses under the parent CodeRabbit comment, not PR-level review events. This release switches both to GitHub's REST inline-reply path, which attaches each reply to the parent comment's existing review chain — the same path the GitHub web UI and CodeRabbit itself use.
+
+### Changed
+
+- **`cr reply` / `cr reply-many` post through REST `POST /repos/{owner}/{repo}/pulls/{pull_number}/comments/{root_comment_id}/replies`** instead of the GraphQL reply mutation. No more `<user> started a review` timeline rows. Output shape is unchanged (`{comment_id, created_at}` for `cr reply`; the per-thread array for `cr reply-many`).
+- **`cr reply` returns exit 2 when REST refuses** (4xx — most commonly 422 on an outdated thread whose diff hunk no longer applies) and posts nothing, instead of silently succeeding via a path that adds timeline noise. The skill surfaces this as a per-thread failure in its Step 8 summary.
+
+### Added
+
+- **`root_comment_db_id` field on `cr threads` output.** The root comment's REST `databaseId`, which the REST `/replies` endpoint is keyed on. Additive and backward-compatible — existing consumers ignore it.
+- **`--root-comment-id <id>` flag on `cr reply`.** Pass the `root_comment_db_id` from a prior `cr threads` payload to skip the lookup round trip on the reply hot path. When omitted, `cr` resolves it from the `thread_id` via one targeted GraphQL query. `cr reply-many` resolves all N ids in a single batched query, so it needs no equivalent flag.
+- **`--allow-graphql-fallback` flag on `cr reply` (off by default, not for skill use).** Falls back to the GraphQL reply mutation when REST refuses, emitting a one-line stderr warning because it re-introduces the PR-timeline review row. Documented in `reference.md` for power users on non-CodeRabbit workflows; the skill never sets it.
+
 ## [0.10.0] — 2026-05-22
 
 `cr status` now surfaces CodeRabbit's formal PR-level review state, so the skill can tell at a glance whether the PR is approved, has changes requested, or is sitting on a stale verdict from before the latest push. The new `bot_review` block on `cr status` gives the agent a clean signal next to the existing `in_progress` (CR re-reviewing) and `mode == paused` (CR waiting on a manual trigger) signals.

@@ -76,6 +76,7 @@ Bad input — a string that matches none of the three forms, or a SHA that isn't
     ],
     "created_at": "2026-05-12T14:32:00Z",
     "has_proposed_fix": true,
+    "root_comment_db_id": 12345,
     "last_bot_comment_id": 12345,
     "last_bot_comment_at": "2026-05-12T14:32:00Z",
     "last_human_comment_at": "2026-05-12T14:40:00Z",
@@ -140,6 +141,7 @@ Combine with the top-level `pr_author` and `running_user` from `cr status` and t
 - `title`: first line of the root comment, with surrounding `**` markdown stripped.
 - `ai_prompt`: contents of `<details><summary>🤖 Prompt for AI Agents</summary>...</details>` if present, else the full root bot comment as a fallback (never empty when a bot comment exists).
 - `comments[].id`: the comment's `databaseId` (numeric REST ID) — pass this as `our-comment-id` to `cr check`.
+- `root_comment_db_id`: the root (first) comment's `databaseId` (numeric REST ID). Additive field for the REST inline-reply path — pass it as `cr reply --root-comment-id` to skip a lookup round trip. `null` only in the defensive case of a thread with no comments. Existing consumers that don't know the field simply ignore it.
 
 ## `cr context`
 
@@ -265,10 +267,21 @@ fi
 ## `cr reply`
 
 ```
-cr reply <pr-url> <thread-id> <body>
+cr reply <pr-url> <thread-id> <body> [--root-comment-id <id>] [--allow-graphql-fallback]
 ```
 
-Post a reply on a thread via `addPullRequestReviewThreadReply`. `<body>` is markdown, passed as a single shell argument.
+Post an inline reply on a thread. `<body>` is markdown, passed as a single shell argument.
+
+### Why REST instead of GraphQL
+
+`cr reply` posts through GitHub's REST endpoint `POST /repos/{owner}/{repo}/pulls/{pull_number}/comments/{root_comment_id}/replies`. This attaches the new comment to the parent comment's existing review chain — it does **not** open a new `PullRequestReview` wrapper. It's the same path the GitHub web UI's reply box and CodeRabbit itself use, which is why those replies stay quiet on the PR timeline.
+
+The older GraphQL mutation `addPullRequestReviewThreadReply` empirically creates a fresh `PullRequestReview` record per call, which GitHub renders as a `<user> started a review` row in the PR timeline. N replies produced N timeline rows. The REST path is the fix; it's the sanctioned reply primitive.
+
+### Flags
+
+- `--root-comment-id <id>`: the REST `databaseId` of the thread's root comment (the `root_comment_db_id` field on `cr threads` output). REST `/replies` is keyed on this numeric id, not the GraphQL `thread_id`. Passing it skips a lookup round trip. When omitted, `cr` resolves it from `thread_id` via one targeted GraphQL query.
+- `--allow-graphql-fallback`: **not for skill use.** When REST refuses (4xx — most commonly 422 on an outdated thread whose diff hunk no longer applies), fall back to the GraphQL `addPullRequestReviewThreadReply` mutation instead of failing. This re-introduces the PR-timeline review row it exists to avoid, so `cr` prints a one-line stderr warning when it fires: `cr: warning: thread <id> reply fell back to GraphQL — created PR-timeline review row`. Provided for power users on non-CodeRabbit workflows; the skill must never set it.
 
 ### Output
 
@@ -277,6 +290,43 @@ Post a reply on a thread via `addPullRequestReviewThreadReply`. `<body>` is mark
 ```
 
 Record `comment_id` to pass into `cr check` later.
+
+### Exit codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | Reply posted (REST success, or GraphQL fallback success when `--allow-graphql-fallback` is set) |
+| 1 | Usage error / bad input |
+| 2 | REST refused and no fallback enabled (thread likely outdated), or both paths failed, or auth/network error |
+
+## `cr reply-many`
+
+```
+cr reply-many <pr-url> --body <body> <thread-id> [<thread-id>...]
+```
+
+Fan-out: post one identical `<body>` to N threads. Typical use: a single mechanical-fix commit closed N issues; reply `Fixed in <sha> by …` to all of them at once. Root comment `databaseId`s for all N threads are resolved in one batched GraphQL query (a single round trip regardless of N), then each reply is posted through the same REST inline-reply path as `cr reply`. There is no `--root-comment-id` flag here — the batched lookup makes it unnecessary. There is no `--allow-graphql-fallback` either; a failed thread is reported per-entry rather than falling back.
+
+### Output
+
+A JSON array, one entry per thread. Success entries carry `comment_id` + `created_at`; failures carry `error` instead:
+
+```json
+[
+  { "thread_id": "PRT_a", "comment_id": 12347, "created_at": "2026-05-12T14:42:00Z" },
+  { "thread_id": "PRT_b", "error": "reply failed (REST refused — thread may be outdated)" }
+]
+```
+
+### Exit codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | Every reply landed |
+| 1 | Usage error / bad input |
+| 2 | At least one reply failed (failed threads carry an `error` field in the output array) |
+
+Only batch when the reply body is *identical*. If even one thread needs a different `<one-line change>`, fall back to per-thread `cr reply`.
 
 ## `cr resolve`
 

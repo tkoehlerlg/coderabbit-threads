@@ -292,6 +292,7 @@ normalize_threads() {
           })),
           created_at: ($root.createdAt // null),
           has_proposed_fix: ($bot_cs | map(has_proposed_fix(.body)) | any),
+          root_comment_db_id: ($root.databaseId // null),
           last_bot_comment_id:      ($last_bot.databaseId // null),
           last_bot_comment_at:      ($last_bot.createdAt  // null),
           last_human_comment_at:    ($last_human.createdAt // null),
@@ -403,23 +404,128 @@ cmd_threads() {
   fi
 }
 
-cmd_reply() {
-  case "${1:-}" in -h|--help) echo "usage: cr reply <pr-url> <thread-id> <body>"; exit 0 ;; esac
-  local pr_url="${1:-}" thread_id="${2:-}" body="${3:-}"
-  [ -z "$pr_url" ] || [ -z "$thread_id" ] || [ -z "$body" ] && \
-    die "usage: cr reply <pr-url> <thread-id> <body>"
-  parse_pr_url "$pr_url"
-  local response
+# Resolve a thread's root comment REST databaseId (first comment on the thread).
+lookup_root_comment_db_id() {
+  local thread_id="$1" response
+  set +e
+  response=$(gh api graphql -F id="$thread_id" \
+    -f query='query($id:ID!){
+      node(id:$id){
+        ... on PullRequestReviewThread{
+          comments(first:1){ nodes { databaseId } }
+        }
+      }
+    }' 2>/dev/null)
+  local rc=$?
+  set -e
+  [ $rc -ne 0 ] && api_die "root comment lookup failed for thread '$thread_id'"
+  jq -r '.data.node.comments.nodes[0].databaseId // empty' <<<"$response"
+}
+
+# Batch-resolve root comment databaseIds for N thread ids (one GraphQL round trip).
+lookup_root_comment_db_ids_batch() {
+  local -a ids=("$@")
+  [ "${#ids[@]}" -eq 0 ] && { printf '{}'; return 0; }
+  local query="query {" i tid alias
+  for i in "${!ids[@]}"; do
+    tid="${ids[$i]}"
+    alias="t${i}"
+    query+=" ${alias}: node(id: \"${tid}\") { ... on PullRequestReviewThread { comments(first: 1) { nodes { databaseId } } } }"
+  done
+  query+=" }"
+  local response rc
+  set +e
+  response=$(gh api graphql -f query="$query" 2>/dev/null)
+  rc=$?
+  set -e
+  [ $rc -ne 0 ] && api_die "batch root comment lookup failed"
+  local result="{}"
+  for i in "${!ids[@]}"; do
+    tid="${ids[$i]}"
+    alias="t${i}"
+    local db_id
+    db_id=$(jq -r --arg a "$alias" '.data[$a].comments.nodes[0].databaseId // empty' <<<"$response")
+    result=$(jq -c --arg tid "$tid" --arg db "$db_id" '. + {($tid): $db}' <<<"$result")
+  done
+  printf '%s' "$result"
+}
+
+post_reply_graphql() {
+  local thread_id="$1" body="$2" response
   response=$(gh api graphql -f threadId="$thread_id" -f body="$body" \
     -f query='mutation($threadId:ID!,$body:String!){
       addPullRequestReviewThreadReply(input:{pullRequestReviewThreadId:$threadId, body:$body}){
         comment{databaseId createdAt}
       }
-    }' 2>/dev/null) || api_die "reply mutation failed"
+    }' 2>/dev/null) || return 1
   jq -c '{
     comment_id: .data.addPullRequestReviewThreadReply.comment.databaseId,
     created_at: .data.addPullRequestReviewThreadReply.comment.createdAt
-  }' <<<"$response" || api_die "unexpected reply response shape"
+  }' <<<"$response"
+}
+
+# Post an inline thread reply via REST /replies. Echoes {comment_id, created_at} JSON on stdout.
+# Returns 0 on success, 1 on REST failure (stderr carries the error).
+post_reply_rest() {
+  local root_db_id="$1" body="$2" response rc
+  set +e
+  response=$(gh api -X POST "repos/$OWNER/$REPO/pulls/$PR_NUMBER/comments/$root_db_id/replies" -f body="$body" 2>&1)
+  rc=$?
+  set -e
+  if [ $rc -ne 0 ]; then
+    echo "cr: REST reply failed for root comment $root_db_id (gh exit $rc): $response" >&2
+    return 1
+  fi
+  jq -c '{comment_id: .id, created_at: .created_at}' <<<"$response" || return 1
+}
+
+# Post a reply on a thread. REST-first; optional GraphQL fallback.
+post_thread_reply() {
+  local thread_id="$1" root_db_id="$2" body="$3" allow_graphql_fallback="${4:-0}"
+  local out
+  if out=$(post_reply_rest "$root_db_id" "$body"); then
+    printf '%s\n' "$out"
+    return 0
+  fi
+  if [ "$allow_graphql_fallback" -eq 1 ]; then
+    echo "cr: warning: thread $thread_id reply fell back to GraphQL — created PR-timeline review row" >&2
+    post_reply_graphql "$thread_id" "$body" || api_die "reply failed for thread '$thread_id' (REST and GraphQL both failed)"
+    return 0
+  fi
+  api_die "reply failed for thread '$thread_id' (REST refused — thread may be outdated)"
+}
+
+cmd_reply() {
+  local pr_url="" thread_id="" body="" root_comment_id="" allow_graphql_fallback=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -h|--help)
+        echo "usage: cr reply <pr-url> <thread-id> <body> [--root-comment-id <id>] [--allow-graphql-fallback]"
+        exit 0
+        ;;
+      --root-comment-id) root_comment_id="${2:-}"; shift 2 ;;
+      --root-comment-id=*) root_comment_id="${1#--root-comment-id=}"; shift ;;
+      --allow-graphql-fallback) allow_graphql_fallback=1; shift ;;
+      --*) die "unknown flag: $1" ;;
+      *)
+        if [ -z "$pr_url" ]; then pr_url="$1"
+        elif [ -z "$thread_id" ]; then thread_id="$1"
+        elif [ -z "$body" ]; then body="$1"
+        else die "too many positional args: $1"
+        fi
+        shift ;;
+    esac
+  done
+  [ -z "$pr_url" ] || [ -z "$thread_id" ] || [ -z "$body" ] && \
+    die "usage: cr reply <pr-url> <thread-id> <body> [--root-comment-id <id>] [--allow-graphql-fallback]"
+  parse_pr_url "$pr_url"
+
+  if [ -z "$root_comment_id" ]; then
+    root_comment_id=$(lookup_root_comment_db_id "$thread_id") || exit 2
+    [ -z "$root_comment_id" ] && api_die "no root comment on thread '$thread_id'"
+  fi
+
+  post_thread_reply "$thread_id" "$root_comment_id" "$body" "$allow_graphql_fallback"
 }
 
 # Fan-out: post one body to N threads in a single call.
@@ -447,26 +553,33 @@ cmd_reply_many() {
   [ "${#thread_ids[@]}" -eq 0 ] && die "cr reply-many: at least one <thread-id> is required"
   parse_pr_url "$pr_url"
 
+  local root_map
+  root_map=$(lookup_root_comment_db_ids_batch "${thread_ids[@]}")
+
   local any_failed=0
   local results="[]"
-  local tid response entry
+  local tid root_db_id response entry
   for tid in "${thread_ids[@]}"; do
+    root_db_id=$(jq -r --arg tid "$tid" '.[$tid] // empty' <<<"$root_map")
+    if [ -z "$root_db_id" ]; then
+      any_failed=1
+      entry=$(jq -c --arg tid "$tid" '{thread_id: $tid, error: "no root comment on thread"}' <<<'{}')
+      results=$(jq -c --argjson e "$entry" '. + [$e]' <<<"$results")
+      continue
+    fi
     set +e
-    response=$(gh api graphql -f threadId="$tid" -f body="$body" \
-      -f query='mutation($threadId:ID!,$body:String!){
-        addPullRequestReviewThreadReply(input:{pullRequestReviewThreadId:$threadId, body:$body}){
-          comment{databaseId createdAt}
-        }
-      }' 2>/dev/null)
+    response=$(post_thread_reply "$tid" "$root_db_id" "$body" 0)
     local rc=$?
     set -e
-    if [ $rc -ne 0 ] || ! entry=$(jq -e -c --arg tid "$tid" '{
+    if [ $rc -eq 0 ] && entry=$(jq -e -c --arg tid "$tid" --argjson r "$response" '{
       thread_id: $tid,
-      comment_id: .data.addPullRequestReviewThreadReply.comment.databaseId,
-      created_at: .data.addPullRequestReviewThreadReply.comment.createdAt
-    } | select(.comment_id != null)' <<<"$response" 2>/dev/null); then
+      comment_id: $r.comment_id,
+      created_at: $r.created_at
+    } | select(.comment_id != null)' 2>/dev/null); then
+      :
+    else
       any_failed=1
-      entry=$(jq -c --arg tid "$tid" '{thread_id: $tid, error: "reply mutation failed"}' <<<'{}')
+      entry=$(jq -c --arg tid "$tid" '{thread_id: $tid, error: "reply failed (REST refused — thread may be outdated)"}' <<<'{}')
     fi
     results=$(jq -c --argjson e "$entry" '. + [$e]' <<<"$results")
   done
@@ -1185,7 +1298,7 @@ Usage:
   cr threads      <pr-url> [--filter <name>] [--since <ref>]
   cr context      <pr-url> <thread-id> [--full | --compact]
   cr proposed-fix <pr-url> <thread-id>
-  cr reply        <pr-url> <thread-id> <body>
+  cr reply        <pr-url> <thread-id> <body> [--root-comment-id <id>] [--allow-graphql-fallback]
   cr reply-many   <pr-url> --body <body> <thread-id> [<thread-id>...]
   cr edit         <pr-url> <comment-id> <new-body>
   cr delete       <pr-url> <comment-id>
