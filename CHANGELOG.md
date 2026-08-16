@@ -6,7 +6,7 @@ All notable changes to `coderabbit-threads` are tracked here. The format follows
 
 ## [Unreleased]
 
-## [0.12.0] — 2026-08-16
+## [0.12.0] — 2026-08-17
 
 CodeRabbit sometimes posts findings inside the PR-level review body rather than as inline threads — an "Outside diff range comments" section for issues outside the diff hunk, and a "Duplicate comments" section for findings that recur across reviews. `cr threads --include-findings` surfaces both alongside real threads, so the skill walks and fixes them in the same pass as everything else.
 
@@ -16,6 +16,10 @@ CodeRabbit sometimes posts findings inside the PR-level review body rather than 
 - **`kind` field on every `cr threads` entry.** `"thread"` for real GitHub review threads, `"finding"` for out-of-diff findings. Findings also carry `repliable: false`, a `finding_section` of `"outside-diff"` or `"duplicate"`, and a `thread_id` of `finding:<hash>` — a content hash, since there's no GitHub thread node behind it. All conversation-state fields (`url`, `comments`, `last_bot_comment_id`, and the rest) are null on a finding.
 - **`unaddressed-finding` label.** Applied unconditionally to every finding. Not a conversation-state label — a finding has no comments to converse in, so it never transitions to another value. `actionable` sorts findings between fresh threads and `outdated-unresolved`.
 - **The skill fixes findings directly, with no reply loop.** `cr context` and `cr check` reject a `finding:` id outright with `'<id>' is an out-of-diff finding, not a repliable thread — it has no reply/resolve/context. Fix the code directly.` The skill reads `root_body` / `ai_prompt` off the `cr threads` entry and applies the fix in the working tree; there's nothing to reply to or resolve.
+
+### Fixed
+
+- **`cr reply-many` no longer reports a false failure on a successful reply.** The success-entry `jq` ran without `-n`, so with an empty stdin it produced no output and the reply was recorded as `reply failed (REST refused — thread may be outdated)` even though the comment had already posted — leaving an orphaned comment and misreporting the batch. The batch reply path (one commit closing several threads) now returns the real `{thread_id, comment_id, created_at}` per reply. Pre-existing since the REST reply switch in 0.11.0.
 
 ## [0.11.0] — 2026-07-05
 

@@ -657,7 +657,7 @@ cmd_reply_many() {
     response=$(post_thread_reply "$tid" "$root_db_id" "$body" 0)
     local rc=$?
     set -e
-    if [ $rc -eq 0 ] && entry=$(jq -e -c --arg tid "$tid" --argjson r "$response" '{
+    if [ $rc -eq 0 ] && entry=$(jq -e -c -n --arg tid "$tid" --argjson r "$response" '{
       thread_id: $tid,
       comment_id: $r.comment_id,
       created_at: $r.created_at

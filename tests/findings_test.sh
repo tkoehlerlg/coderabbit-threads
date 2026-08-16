@@ -101,4 +101,17 @@ else
   grep -qi "not a repliable thread" "$TASK5_ERR" && echo "ok   - resolve rejects finding id" || { echo "FAIL - resolve error message missing guard text"; fail=1; }
 fi
 
+# reply-many success-entry must use `jq -n`, else an empty stdin makes the entry
+# jq produce no output and reply-many reports a false failure while the comment
+# is already posted (orphaned). Regression guard for the -n fix.
+grep -Eq 'entry=\$\(jq -e -c -n --arg tid' bin/cr \
+  && echo "ok   - reply-many success entry uses jq -n" \
+  || { echo "FAIL - reply-many success-entry jq missing -n (false-failure/orphan bug)"; fail=1; }
+# Functional: the success-entry jq must yield the entry even with empty stdin.
+rm_entry=$(jq -e -c -n --arg tid "T" --argjson r '{"comment_id":123,"created_at":"x"}' \
+  '{thread_id:$tid, comment_id:$r.comment_id, created_at:$r.created_at} | select(.comment_id != null)' </dev/null 2>/dev/null)
+[ "$rm_entry" = '{"thread_id":"T","comment_id":123,"created_at":"x"}' ] \
+  && echo "ok   - reply-many success entry survives empty stdin" \
+  || { echo "FAIL - reply-many success entry empty on empty stdin"; fail=1; }
+
 exit $fail
