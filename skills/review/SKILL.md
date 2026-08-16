@@ -2,7 +2,7 @@
 name: review
 description: Walk, go through, or handle a PR's open CodeRabbit review threads. Inspect what CodeRabbit wants (including its proposed-fix diffs) and reply or respond per-thread in a conversational loop. Use when handling CodeRabbit feedback across multiple review rounds, when threads need per-thread replies (not a bulk PR summary), when you want to read CodeRabbit's proposed fixes without applying them, when you need to surface CodeRabbit pushback or handle the next round of review, or when you want to auto-close threads only after CodeRabbit agrees. Distinct from coderabbit:autofix, which applies fixes and posts one summary comment.
 metadata:
-  version: "0.12.0"
+  version: "0.13.0"
   triggers:
     - coderabbit.?threads
     - cr.?threads
@@ -59,6 +59,8 @@ The `metadata.triggers` block in the frontmatter is a regex matcher consumed by 
 Each reply is a short factual statement (`Fixed in <sha>`, `Won't fix: <reason>`, `Out-of-scope`). No multi-paragraph defenses. No attempts to persuade CodeRabbit. The skill posts replies inline on each thread, polls for CodeRabbit's reaction, and only resolves a thread once CodeRabbit agrees.
 
 **Replies are inline thread responses, never PR-level review events.** `cr reply` and `cr reply-many` post through GitHub's REST inline-reply path, so a reply lands under the parent CodeRabbit comment and does **not** create a `<user> started a review` row in the PR timeline. Always go through `cr reply` / `cr reply-many` — never post via `gh pr comment` or a raw `addPullRequestReviewThreadReply` GraphQL mutation, both of which surface as PR-level noise.
+
+**Push before you reply.** A `Fixed in <sha>` reply is a promise that `<sha>` is on GitHub. Post it before the commit is pushed and the link 404s, and CodeRabbit re-reviews without ever seeing the fix it was told about. So the run has one order and it never bends: **commit every fix during the walk, push once, then post the replies.** Never post a reply that cites a commit the run hasn't pushed. This is why Step 6 is two phases — a walk that only commits, then a push-and-reply phase.
 
 ## Prerequisites
 
@@ -422,7 +424,12 @@ Store the answer as `RESOLVE_POLICY` (`auto` / `ask` / `never`) and use it in St
 
 ### Step 6 — Per-Thread Interactive Loop
 
-For each item in triage order:
+> **⚠️ Two phases, never one. Walk → push → reply.**
+> **Phase A (the walk below):** go through every item in triage order, apply and **commit** fixes, and *record* the reply each item should get — but post **nothing** yet. Every consent gate in this step (`together` pausing, behavioral-contract escalation, `contested` / `bot-pushback` handling) happens here, unchanged.
+> **Phase B ([Step 6B](#step-6b--push-once-then-post-every-reply)):** once the walk is done, `git push` a single time (only if the walk committed anything), then post every recorded reply.
+> A `Fixed in <sha>` reply must never leave before that sha is pushed — see the [Core Principle](#core-principle). Findings post no reply, but their fixes are committed in Phase A so they ride the same one push.
+
+For each item in triage order (**Phase A — commit only, do not post replies**):
 
 #### Findings branch — items with `kind == "finding"`
 
@@ -574,23 +581,21 @@ Check `kind` first, on every item, before anything else. **`kind` is always pres
    - Speculative explanations
    - Sentiment that reads as arguing with CodeRabbit
 
-   **Show the user what you posted.** Print a one-line summary after each `cr reply`:
+   **Show the user what you posted.** In Step 6B, as each reply lands, print a one-line summary:
    ```
    Thread 3/7 (likely-fixed, apps/app/ui.tsx:88) → posted: "Fixed in 4af1c9d by switching <Button> to semantic markup."
    ```
-   This is informational, not an approval step — proceed to the next thread immediately. If the user wants to intervene, they can cancel the skill run; nothing already posted is auto-reverted.
+   This is informational, not an approval step. If the user wants to intervene, they can cancel the skill run; nothing already posted is auto-reverted.
 
-4. **Post via `cr`:**
+4. **Record the reply — do not post it during the walk (Phase A).** Compose the reply body per the templates above and record it against this thread. Posting happens in [Step 6B](#step-6b--push-once-then-post-every-reply), after the single push, so a `Fixed in <sha>` reply never leaves before its commit is on GitHub.
 
    ```bash
-   # Thread the root_comment_db_id from Step 3's threads JSON to skip a lookup round trip.
-   root_db_id=$(jq -r --arg id "$thread_id" '.[] | select(.thread_id == $id) | .root_comment_db_id' <<<"$threads")
-   response=$(cr reply "$pr_url" "$thread_id" "$body" --root-comment-id "$root_db_id")
-   our_comment_id=$(jq -r '.comment_id' <<<"$response")
-   echo "$thread_id $our_comment_id" >> "$POLL_QUEUE"
+   # Phase A records only. Keep the composed body keyed by thread_id (the
+   # root_comment_db_id from Step 3's threads JSON skips a lookup at post time).
+   printf '%s\t%s\n' "$thread_id" "$body" >> "$PENDING_REPLIES"
    ```
 
-   `--root-comment-id` is an optimization, not a requirement — `cr reply "$pr_url" "$thread_id" "$body"` resolves the root comment itself with one extra call. `cr reply` posts through the REST inline-reply path, so nothing lands in the PR timeline.
+   The `cr reply` / `cr reply-many` mechanics below are the *how* — they execute in Step 6B. Composing the reply is the Phase-A decision documented here.
 
    **If `cr reply` exits 2 with a REST failure, the thread is likely outdated** (GitHub returns 422 when the cited diff hunk no longer applies). Nothing is posted. Don't retry blindly and don't reach for `--allow-graphql-fallback` (that flag re-introduces a PR-timeline review row and is not for skill use). Surface it in Step 8's summary as `⚠️ thread <id> — could not reply (outdated thread)` and let the user handle it manually or `cr edit` an existing reply.
 
@@ -628,6 +633,31 @@ Check `kind` first, on every item, before anything else. **`kind` is always pres
    Both subcommands operate only on comments the running user authored. GitHub returns 403 otherwise; `cr` surfaces that as an API error at exit code 2 without retry. Don't try to edit or delete a CodeRabbit comment — there's no path to that, and it would be the wrong move anyway.
 
    If you call `cr edit` *after* `cr check` has already seen CodeRabbit's reaction to the original body, the edit doesn't retroactively re-trigger CodeRabbit. The bot reacted to what was posted at that moment; your edit is for downstream readers (humans on the PR, future scans). If the disagreement is open, posting a *new* reply is usually clearer than editing the original.
+
+### Step 6B — Push once, then post every reply
+
+Phase A committed the fixes and recorded the replies, but posted nothing. Now, in order:
+
+1. **One push for the whole batch — only if the walk committed something.**
+
+   ```bash
+   git push
+   ```
+
+   Push exactly once, never per thread. If the walk committed nothing — every reply was `Won't fix` / `Out-of-scope` / `Acknowledged`, or every actionable item was `likely-fixed` citing an already-pushed sha — there is nothing to push, so skip it. The push wakes CodeRabbit to re-review in the background; that is expected and does not block posting. Any new threads it opens surface on the next run.
+
+2. **Now post every recorded reply.** For each `$PENDING_REPLIES` entry, post it with `cr reply` (or `cr reply-many` when one commit closed several threads with the *same* body — Step 6 sub-step 4's batch form). Enqueue each posted `comment_id` to `$POLL_QUEUE` for Step 7, and print the one-line "posted" summary per reply.
+
+   ```bash
+   while IFS=$'\t' read -r thread_id body; do
+     root_db_id=$(jq -r --arg id "$thread_id" '.[] | select(.thread_id == $id) | .root_comment_db_id' <<<"$threads")
+     response=$(cr reply "$pr_url" "$thread_id" "$body" --root-comment-id "$root_db_id") || {
+       echo "⚠️ thread $thread_id — could not reply (outdated thread)"; continue; }
+     echo "$thread_id $(jq -r '.comment_id' <<<"$response")" >> "$POLL_QUEUE"
+   done < "$PENDING_REPLIES"
+   ```
+
+   Because the push already happened, every `Fixed in <sha>` reply cites a sha that is live on GitHub — no `cr edit`-to-fill-in-the-sha dance. `cr reply` exit 2 means the thread is outdated (GitHub 422); nothing posted, don't retry or reach for `--allow-graphql-fallback`, surface it in Step 8. The reply-posting order within Phase B does not matter — resolution is still deferred to Step 7 and gated by `RESOLVE_POLICY`.
 
 ### Step 7 — Poll for CodeRabbit Reaction
 
@@ -796,7 +826,8 @@ Out-of-scope of this PR — should be tracked separately. (deferring to a separa
 | 3 | Check CodeRabbit + fetch | `cr status`, `cr threads --filter open --include-findings` |
 | 4 | Triage (threads and findings alike; findings read context from the `cr threads` entry) | Read cited files; assign labels |
 | 5 | Display (threads and findings shown as separate blocks) + set `MODE` (together/auto) + set `RESOLVE_POLICY` | AskUserQuestion (twice: mode?, policy?) |
-| 6 | Per-thread reply (autonomous for likely-fixed / out-of-scope in both modes; + still-applies / high-confidence contested in auto; ask user for unclear / bot-pushback always). **Findings (`kind == "finding"`) branch separately: verify → skip if already fixed → else fix-only under `MODE` as `still-applies`, `CodeRabbit-finding: <hash>` trailer, no reply/resolve/check/proposed-fix, no Step 7.** | `cr reply` (threads); no `cr` write calls for findings |
+| 6 | **Phase A — walk: commit fixes, record replies, post nothing.** Autonomous for likely-fixed / out-of-scope in both modes; + still-applies / high-confidence contested in auto; ask user for unclear / bot-pushback always. **Findings (`kind == "finding"`) branch separately: verify → skip if already fixed → else fix-only under `MODE` as `still-applies`, `CodeRabbit-finding: <hash>` trailer, no reply/resolve/check/proposed-fix, no Step 7.** | commit only; record to `$PENDING_REPLIES` |
+| 6B | **Push once** (only if the walk committed), **then post every recorded reply.** No `Fixed in <sha>` reply goes out before its sha is pushed. | `git push` ×1 + `cr reply` / `cr reply-many` |
 | 7 | Poll for CodeRabbit + apply `RESOLVE_POLICY` (threads only — findings have no reaction channel) | `cr check` + `cr resolve` + `ScheduleWakeup` (60 s) |
 | 8 | Summary (includes an out-of-diff findings line: fixed / skipped / escalated) | Terminal output only |
 

@@ -6,6 +6,14 @@ All notable changes to `coderabbit-threads` are tracked here. The format follows
 
 ## [Unreleased]
 
+## [0.13.0] — 2026-08-17
+
+The skill now pushes before it replies. A `Fixed in <sha>` reply is a promise that the commit is on GitHub; posting it before the push left a link that 404s and let CodeRabbit re-review without ever seeing the fix. Step 6 is now two phases — walk every thread and commit the fixes, push once, then post the replies — so every sha a reply cites is live the moment it lands.
+
+### Changed
+
+- **Step 6 splits into a commit-only walk and a push-then-reply phase (Step 6B).** The per-thread walk applies and commits fixes and records each reply, but posts nothing. After the walk the skill pushes once — only when the walk committed something — and then posts every reply, using `cr reply-many` for the "one commit closed N threads" case. Every consent gate (`MODE`, `RESOLVE_POLICY`, behavioral-contract escalation, `contested` / `bot-pushback` handling) is unchanged and still runs in the walk. One push per run replaces the per-thread race, and there is no more `cr edit`-to-fill-in-the-sha after posting a reply early.
+
 ## [0.12.0] — 2026-08-17
 
 CodeRabbit sometimes posts findings inside the PR-level review body rather than as inline threads — an "Outside diff range comments" section for issues outside the diff hunk, and a "Duplicate comments" section for findings that recur across reviews. `cr threads --include-findings` surfaces both alongside real threads, so the skill walks and fixes them in the same pass as everything else.
