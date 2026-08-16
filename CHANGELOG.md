@@ -6,6 +6,17 @@ All notable changes to `coderabbit-threads` are tracked here. The format follows
 
 ## [Unreleased]
 
+## [0.12.0] — 2026-08-16
+
+CodeRabbit sometimes posts findings inside the PR-level review body rather than as inline threads — an "Outside diff range comments" section for issues outside the diff hunk, and a "Duplicate comments" section for findings that recur across reviews. `cr threads --include-findings` surfaces both alongside real threads, so the skill walks and fixes them in the same pass as everything else.
+
+### Added
+
+- **`--include-findings` flag on `cr threads`.** Parses CodeRabbit's review-body "Outside diff range comments" and "Duplicate comments" sections and merges them into the thread listing. Off by default; carried by the `open`, `all`, and `actionable` filters, excluded from `pushback`/`bot-agreed` (label-matched, and a finding has no label to match) and `outdated` (findings are never outdated). Findings recurring across multiple reviews are deduplicated by content hash, keeping the newest copy.
+- **`kind` field on every `cr threads` entry.** `"thread"` for real GitHub review threads, `"finding"` for out-of-diff findings. Findings also carry `repliable: false`, a `finding_section` of `"outside-diff"` or `"duplicate"`, and a `thread_id` of `finding:<hash>` — a content hash, since there's no GitHub thread node behind it. All conversation-state fields (`url`, `comments`, `last_bot_comment_id`, and the rest) are null on a finding.
+- **`unaddressed-finding` label.** Applied unconditionally to every finding. Not a conversation-state label — a finding has no comments to converse in, so it never transitions to another value. `actionable` sorts findings between fresh threads and `outdated-unresolved`.
+- **The skill fixes findings directly, with no reply loop.** `cr context` and `cr check` reject a `finding:` id outright with `'<id>' is an out-of-diff finding, not a repliable thread — it has no reply/resolve/context. Fix the code directly.` The skill reads `root_body` / `ai_prompt` off the `cr threads` entry and applies the fix in the working tree; there's nothing to reply to or resolve.
+
 ## [0.11.0] — 2026-07-05
 
 `cr reply` and `cr reply-many` now post inline thread replies without producing PR-timeline review rows. Previously each reply went through the GraphQL `addPullRequestReviewThreadReply` mutation, which empirically creates a fresh `PullRequestReview` record per call — GitHub renders each as a `<user> started a review` row in the PR timeline, so a single session of N replies left N such rows. Replies are meant to be inline responses under the parent CodeRabbit comment, not PR-level review events. This release switches both to GitHub's REST inline-reply path, which attaches each reply to the parent comment's existing review chain — the same path the GitHub web UI and CodeRabbit itself use.

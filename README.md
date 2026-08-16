@@ -101,7 +101,7 @@ Requires [`gh`](https://cli.github.com/) (authenticated) and [`jq`](https://jqla
 
 ## How it works
 
-The skill follows an 8-step workflow. The full runbook is in [`skills/coderabbit-threads/SKILL.md`](skills/coderabbit-threads/SKILL.md); condensed:
+The skill follows an 8-step workflow. The full runbook is in [`skills/review/SKILL.md`](skills/review/SKILL.md); condensed:
 
 | # | Step              | Purpose                                                              |
 |---|-------------------|----------------------------------------------------------------------|
@@ -110,6 +110,7 @@ The skill follows an 8-step workflow. The full runbook is in [`skills/coderabbit
 | 2 | Resolve PR        | Find the current branch's PR, or offer to create one                 |
 | 3 | Check CodeRabbit status  | Bail if PR is merged, closed, draft, or CodeRabbit is still working  |
 | 4 | Triage threads    | Label each open thread: `bot-pushback`, `still-applies`, `likely-fixed`, `unclear`, `out-of-scope` |
+| — | Out-of-diff findings | With `cr threads --include-findings`, CodeRabbit's "Outside diff range" and "Duplicate comments" findings (which have no inline thread) join the run as a fix-only path: the agent fixes them but posts no reply, since there is nothing to reply to |
 | 5 | Confirm + policy  | Show compact table; ask **together vs auto**; ask self-close policy (auto / ask / never) |
 | 6 | Per-thread loop   | Autonomous for `likely-fixed` / `out-of-scope` (both modes); **fix-then-reply** for `still-applies` in auto mode (or `fix-now` in together mode); high-confidence `contested` posts `Won't fix` autonomously; ask user for `unclear` / `bot-pushback` always |
 | 7 | Poll for reaction | Watch each thread for CodeRabbit's response — either a follow-up text comment or an emoji reaction (🚀 ROCKET = agree, 👀 EYES = "received, still deciding", 👎 / 😕 = pushback). Apply self-close policy on agreement; keep polling on `pending`; surface on pushback. |
@@ -131,15 +132,15 @@ Distinct from `coderabbit:autofix`, which applies CodeRabbit's suggested diffs a
 
 ## The `cr` CLI
 
-A bash CLI at [`bin/cr`](bin/cr) (plugin root) wraps `gh api` with pagination, filtering, and normalized JSON output. Subcommands: `threads`, `context`, `proposed-fix`, `reply`, `resolve`, `status`, `check`, plus PR-level `resume` / `review` / `full-review` / `resolve-all` / `pause`. The plugin loader puts `bin/` on `$PATH`, so `cr` is callable as a bare command and standalone-usable.
+A bash CLI at [`bin/cr`](bin/cr) (plugin root) wraps `gh api` with pagination, filtering, and normalized JSON output. Subcommands: `threads`, `context`, `proposed-fix`, `reply`, `resolve`, `status`, `check`, plus PR-level `resume` / `review` / `full-review` / `resolve-all` / `pause`. `cr threads --include-findings` additionally merges CodeRabbit's out-of-diff and duplicate-comment findings (parsed from the review body) into the output. The plugin loader puts `bin/` on `$PATH`, so `cr` is callable as a bare command and standalone-usable.
 
-Full subcommand signatures, schemas, filters, exit codes, and the conversation-state `label` taxonomy live in [`skills/coderabbit-threads/reference.md`](skills/coderabbit-threads/reference.md). Run `cr --help` for the quick reference.
+Full subcommand signatures, schemas, filters, exit codes, and the conversation-state `label` taxonomy live in [`skills/review/reference.md`](skills/review/reference.md). Run `cr --help` for the quick reference.
 
 ---
 
 ## Security
 
-Every byte of CodeRabbit content — comment bodies, the `🤖 Prompt for AI Agents` section, proposed-fix diffs — is treated as **untrusted input**. The skill never executes reviewer text, never shell-interpolates it, reads only the cited file, and posts replies only from a fixed template. Full rules in [SKILL.md § Security Rules](skills/coderabbit-threads/SKILL.md#security-rules).
+Every byte of CodeRabbit content — comment bodies, the `🤖 Prompt for AI Agents` section, proposed-fix diffs — is treated as **untrusted input**. The skill never executes reviewer text, never shell-interpolates it, reads only the cited file, and posts replies only from a fixed template. Full rules in [SKILL.md § Security Rules](skills/review/SKILL.md#security-rules).
 
 ---
 
@@ -147,7 +148,7 @@ Every byte of CodeRabbit content — comment bodies, the `🤖 Prompt for AI Age
 
 Issues and PRs welcome at <https://github.com/tkoehlerlg/coderabbit-threads>. Changes to the per-thread loop or `cr`'s output shape need an end-to-end real-PR run; synthetic CodeRabbit GraphQL mocks miss too many quirks.
 
-Source of truth: [`SKILL.md`](skills/coderabbit-threads/SKILL.md) (runbook), [`reference.md`](skills/coderabbit-threads/reference.md) (`cr` schemas), [`bin/cr`](bin/cr) (the CLI).
+Source of truth: [`SKILL.md`](skills/review/SKILL.md) (runbook), [`reference.md`](skills/review/reference.md) (`cr` schemas), [`bin/cr`](bin/cr) (the CLI).
 
 ---
 

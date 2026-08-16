@@ -19,7 +19,7 @@
 
 set -euo pipefail
 
-CR_VERSION="0.11.0"
+CR_VERSION="0.12.0"
 
 # --- helpers ---------------------------------------------------------------
 
@@ -51,6 +51,14 @@ is_bot_login() {
   case "$1" in
     coderabbitai|coderabbit|coderabbitai\[bot\]|coderabbit\[bot\]) return 0 ;;
     *) return 1 ;;
+  esac
+}
+
+# Findings (thread_id "finding:<hash>") have no GitHub thread. Any thread op on
+# one is a caller bug — fail loudly rather than mis-target a real thread.
+reject_finding_id() {
+  case "${1:-}" in
+    finding:*) die "'$1' is an out-of-diff finding, not a repliable thread — it has no reply/resolve/context. Fix the code directly." ;;
   esac
 }
 
@@ -158,6 +166,53 @@ fetch_review_threads_raw() {
   running_user=$(gh_running_user)
   all=$(jq -c --arg pa "$pr_author" --arg ru "$running_user" \
     'map(. + {_pr_author: $pa, _running_user: $ru})' <<<"$all")
+  printf '%s' "$all"
+}
+
+# Fetch all CodeRabbit review bodies for the PR (for out-of-diff findings).
+# Fully paginated. Split into first-page/subsequent-page queries — `gh api
+# graphql` rejects an inline `after:(if $cursor=="" then null end)` expression,
+# same constraint as fetch_review_threads_raw above.
+fetch_cr_review_bodies() {
+  local cursor="" all="[]" response has_next rc
+  while :; do
+    set +e
+    if [ -n "$cursor" ]; then
+      response=$(gh api graphql \
+        -F owner="$OWNER" -F repo="$REPO" -F pr="$PR_NUMBER" -F cursor="$cursor" \
+        -f query='query($owner:String!,$repo:String!,$pr:Int!,$cursor:String){
+          repository(owner:$owner,name:$repo){ pullRequest(number:$pr){
+            reviews(first:50, after:$cursor){
+              pageInfo{hasNextPage endCursor}
+              nodes{ author{login} body submittedAt }
+            } } } }' 2>/dev/null)
+    else
+      response=$(gh api graphql \
+        -F owner="$OWNER" -F repo="$REPO" -F pr="$PR_NUMBER" \
+        -f query='query($owner:String!,$repo:String!,$pr:Int!){
+          repository(owner:$owner,name:$repo){ pullRequest(number:$pr){
+            reviews(first:50){
+              pageInfo{hasNextPage endCursor}
+              nodes{ author{login} body submittedAt }
+            } } } }' 2>/dev/null)
+    fi
+    rc=$?
+    set -e
+
+    if response_is_pr_not_found "$response"; then
+      not_found_die "PR not found: $OWNER/$REPO#$PR_NUMBER"
+    fi
+    [ $rc -ne 0 ] && api_die "review-body fetch failed (gh exit $rc)"
+
+    all=$(jq -c --argjson r "$response" '
+      def is_bot($a): ($a=="coderabbitai" or $a=="coderabbit" or $a=="coderabbitai[bot]" or $a=="coderabbit[bot]");
+      . + ([$r.data.repository.pullRequest.reviews.nodes[]?
+            | select(is_bot(.author.login) and .submittedAt!=null)
+            | {body, submittedAt}])' <<<"$all")
+    has_next=$(jq -r '.data.repository.pullRequest.reviews.pageInfo.hasNextPage' <<<"$response")
+    cursor=$(jq -r '.data.repository.pullRequest.reviews.pageInfo.endCursor // ""' <<<"$response")
+    [ "$has_next" = "true" ] || break
+  done
   printf '%s' "$all"
 }
 
@@ -271,6 +326,7 @@ normalize_threads() {
             | sort_by(.createdAt) | last
          else null end) as $last_bot_reaction
       | {
+          kind: "thread",
           thread_id: .id,
           url: $thread_url,
           is_resolved: .isResolved,
@@ -318,10 +374,11 @@ apply_filter() {
     outdated)    jq -c '[ .[] | select(.is_outdated == true and .is_resolved == false) ]' ;;
     pushback)    jq -c '[ .[] | select(.label == "bot-pushback" and .is_resolved == false) ]' ;;
     bot-agreed)  jq -c '[ .[] | select(.label == "bot-agreed" and .is_resolved == false) ]' ;;
-    # Same set as `open`; sort: bot-pushback → fresh → outdated-unresolved → bot-agreed.
+    # Same set as `open`; sort: bot-pushback → fresh → findings → outdated-unresolved → bot-agreed.
     actionable)  jq -c '
                   [ .[] | select(.is_resolved == false) ]
                   | sort_by(if .label == "bot-pushback" then 0
+                            elif .label == "unaddressed-finding" then 1.5
                             elif .label == "bot-agreed" then 3
                             elif .is_outdated then 2
                             else 1 end)' ;;
@@ -375,21 +432,22 @@ apply_since() {
 # --- subcommands -----------------------------------------------------------
 
 cmd_threads() {
-  local pr_url="" filter="open" since_ref=""
+  local pr_url="" filter="open" since_ref="" include_findings=0
   while [ $# -gt 0 ]; do
     case "$1" in
-      -h|--help) echo "usage: cr threads <pr-url> [--filter open|all|outdated|pushback|bot-agreed|actionable] [--since <ref>]"; exit 0 ;;
+      -h|--help) echo "usage: cr threads <pr-url> [--filter open|all|outdated|pushback|bot-agreed|actionable] [--since <ref>] [--include-findings]"; exit 0 ;;
       --filter) filter="${2:-}"; shift 2 ;;
       --filter=*) filter="${1#--filter=}"; shift ;;
       --since) since_ref="${2:-}"; shift 2 ;;
       --since=*) since_ref="${1#--since=}"; shift ;;
+      --include-findings) include_findings=1; shift ;;
       --*) die "unknown flag: $1" ;;
       *)
         [ -z "$pr_url" ] && pr_url="$1" || die "too many positional args: $1"
         shift ;;
     esac
   done
-  [ -z "$pr_url" ] && die "usage: cr threads <pr-url> [--filter open|all|outdated|pushback|bot-agreed|actionable] [--since <ref>]"
+  [ -z "$pr_url" ] && die "usage: cr threads <pr-url> [--filter open|all|outdated|pushback|bot-agreed|actionable] [--since <ref>] [--include-findings]"
   parse_pr_url "$pr_url"
   local since_iso=""
   if [ -n "$since_ref" ]; then
@@ -397,10 +455,17 @@ cmd_threads() {
   fi
   local raw
   raw=$(fetch_review_threads_raw)
+  local threads_json findings_json="[]"
+  threads_json=$(printf '%s' "$raw" | normalize_threads "$pr_url")
+  if [ "$include_findings" -eq 1 ]; then
+    findings_json=$(parse_findings_from_reviews "$(fetch_cr_review_bodies)")
+  fi
+  local merged
+  merged=$(jq -c -n --argjson t "$threads_json" --argjson f "$findings_json" '$t + $f')
   if [ -n "$since_iso" ]; then
-    printf '%s' "$raw" | normalize_threads "$pr_url" | apply_filter "$filter" | apply_since "$since_iso"
+    printf '%s' "$merged" | apply_filter "$filter" | apply_since "$since_iso"
   else
-    printf '%s' "$raw" | normalize_threads "$pr_url" | apply_filter "$filter"
+    printf '%s' "$merged" | apply_filter "$filter"
   fi
 }
 
@@ -518,6 +583,7 @@ cmd_reply() {
   done
   [ -z "$pr_url" ] || [ -z "$thread_id" ] || [ -z "$body" ] && \
     die "usage: cr reply <pr-url> <thread-id> <body> [--root-comment-id <id>] [--allow-graphql-fallback]"
+  reject_finding_id "$thread_id"
   parse_pr_url "$pr_url"
 
   if [ -z "$root_comment_id" ]; then
@@ -553,13 +619,33 @@ cmd_reply_many() {
   [ "${#thread_ids[@]}" -eq 0 ] && die "cr reply-many: at least one <thread-id> is required"
   parse_pr_url "$pr_url"
 
-  local root_map
-  root_map=$(lookup_root_comment_db_ids_batch "${thread_ids[@]}")
+  local tid root_db_id response entry
+
+  # Findings have no GitHub thread node — never send them to the batch GraphQL
+  # lookup. Reject each one as a per-entry error instead, mirroring the
+  # function's existing partial-success contract.
+  local -a real_thread_ids=()
+  for tid in "${thread_ids[@]}"; do
+    case "$tid" in
+      finding:*) ;;
+      *) real_thread_ids+=("$tid") ;;
+    esac
+  done
+
+  local root_map="{}"
+  [ "${#real_thread_ids[@]}" -gt 0 ] && root_map=$(lookup_root_comment_db_ids_batch "${real_thread_ids[@]}")
 
   local any_failed=0
   local results="[]"
-  local tid root_db_id response entry
   for tid in "${thread_ids[@]}"; do
+    case "$tid" in
+      finding:*)
+        any_failed=1
+        entry=$(jq -c --arg tid "$tid" '{thread_id: $tid, error: "out-of-diff finding, not a repliable thread — it has no reply/resolve/context"}' <<<'{}')
+        results=$(jq -c --argjson e "$entry" '. + [$e]' <<<"$results")
+        continue
+        ;;
+    esac
     root_db_id=$(jq -r --arg tid "$tid" '.[$tid] // empty' <<<"$root_map")
     if [ -z "$root_db_id" ]; then
       any_failed=1
@@ -596,6 +682,7 @@ cmd_edit() {
   local pr_url="${1:-}" comment_id="${2:-}" new_body="${3:-}"
   [ -z "$pr_url" ] || [ -z "$comment_id" ] || [ -z "$new_body" ] && \
     die "usage: cr edit <pr-url> <comment-id> <new-body>"
+  reject_finding_id "$comment_id"
   parse_pr_url "$pr_url"
 
   local response rc
@@ -615,6 +702,7 @@ cmd_delete() {
   local pr_url="${1:-}" comment_id="${2:-}"
   [ -z "$pr_url" ] || [ -z "$comment_id" ] && \
     die "usage: cr delete <pr-url> <comment-id>"
+  reject_finding_id "$comment_id"
   parse_pr_url "$pr_url"
 
   set +e
@@ -630,6 +718,7 @@ cmd_resolve() {
   local pr_url="${1:-}" thread_id="${2:-}"
   [ -z "$pr_url" ] || [ -z "$thread_id" ] && \
     die "usage: cr resolve <pr-url> <thread-id>"
+  reject_finding_id "$thread_id"
   parse_pr_url "$pr_url"
   local response
   response=$(gh api graphql -f threadId="$thread_id" \
@@ -913,6 +1002,7 @@ cmd_context() {
   [ "$full" -eq 1 ] && [ "$compact" -eq 1 ] && die "cr context: --full and --compact are mutually exclusive"
   [ -z "$pr_url" ] || [ -z "$thread_id" ] && \
     die "usage: cr context <pr-url> <thread-id> [--full | --compact]"
+  reject_finding_id "$thread_id"
   parse_pr_url "$pr_url"
 
   # Reuse the threads pipeline so the same normalization (ai_prompt, severity,
@@ -1109,6 +1199,7 @@ cmd_proposed_fix() {
   local pr_url="${1:-}" thread_id="${2:-}"
   [ -z "$pr_url" ] || [ -z "$thread_id" ] && \
     die "usage: cr proposed-fix <pr-url> <thread-id>"
+  reject_finding_id "$thread_id"
   parse_pr_url "$pr_url"
 
   local thread
@@ -1146,6 +1237,7 @@ cmd_check() {
   local pr_url="${1:-}" thread_id="${2:-}" our_id="${3:-}"
   [ -z "$pr_url" ] || [ -z "$thread_id" ] || [ -z "$our_id" ] && \
     die "usage: cr check <pr-url> <thread-id> <our-comment-id>"
+  reject_finding_id "$thread_id"
   parse_pr_url "$pr_url"
 
   local response
@@ -1268,6 +1360,102 @@ cmd_pause() {
   post_coderabbit_command "$pr_url" "pause"
 }
 
+# Hidden debug entrypoint: reads a JSON array of {body, submittedAt} CodeRabbit
+# reviews on stdin, emits the normalized findings array. Not in --help.
+cmd_parse_findings_stub() {
+  local reviews; reviews=$(cat)
+  parse_findings_from_reviews "$reviews"
+}
+
+# Walk CodeRabbit review bodies and emit normalized out-of-diff findings.
+# awk splits section->file->finding (delimited by the cr-comment marker) and emits
+# control-delimited records; jq extracts fields per record. Findings from the
+# Additional/Nitpick sections are skipped. Recurring findings dedup by hash,
+# keeping the newest review's copy.
+#
+# BSD-awk-safe: review bodies stream through awk with real newlines (a
+# @@REVIEW@@<ts> delimiter line precedes each raw body), file/hash are pulled with
+# POSIX 2-arg match()+substr(), and records use octal \037/\036 delimiters (BSD
+# awk mangles \x1f hex escapes). jq owns line-range/header/title/prompt parsing.
+parse_findings_from_reviews() {
+  local reviews="$1"
+  local records
+  records=$(jq -r '.[] | "@@REVIEW@@" + (.submittedAt // ""), (.body // "")' <<<"$reviews" | awk '
+    /^@@REVIEW@@/ { ts=substr($0,11); section=""; file=""; buf=""; next }
+    {
+      line=$0
+      sub(/^> ?/, "", line)   # strip one blockquote level
+      if (line ~ /Outside diff range comments \(/) { section="outside-diff"; file=""; buf=""; next }
+      if (line ~ /Duplicate comments \(/)          { section="duplicate";    file=""; buf=""; next }
+      if (line ~ /(Additional|Nitpick) comments \(/ || line ~ /Actionable comments/) { section=""; file=""; buf=""; next }
+      # File header inside a wanted section: <summary>PATH (N)</summary>, not a "comments (" header
+      if (section != "" && line ~ /<summary>[^<]+\([0-9]+\)<\/summary>/ && line !~ /comments \(/) {
+        f=line; sub(/^.*<summary>/, "", f); sub(/ *\([0-9]+\)<\/summary>.*$/, "", f)
+        file=f; buf=""; next
+      }
+      if (line ~ /cr-comment:v1:/) {
+        hash=""
+        if (match(line, /cr-comment:v1:[0-9a-f]+/)) hash=substr(line, RSTART+14, RLENGTH-14)
+        if (section != "" && file != "" && hash != "") {
+          printf "%s\037%s\037%s\037%s\037%s\036", ts, section, file, hash, buf
+        }
+        buf=""; next
+      }
+      buf = buf line "\n"
+    }
+  ')
+  printf '%s' "$records" | jq -Rs '
+    def parse_header($b): (($b//"")|[capture("_(?<type>[^_]+)_\\s*\\|\\s*_(?<sev>[^_]+)_")][0] // {type:null,sev:null});
+    def line_range($b):   (($b//"")|[capture("`(?<r>[0-9]+(-[0-9]+)?)`\\s*:")][0].r // "");
+    def finding_title($b):
+      ( ($b//"") | split("\n") | map(gsub("^\\s+|\\s+$";"")) | map(select(length>0)) ) as $lines
+      | ( [ $lines[] | select(test("^\\*\\*[^*].*\\*\\*$")) ] | last ) as $bold_only
+      | ( [ $lines[] | capture("^\\*\\*(?<t>[^*]+)\\*\\*") | .t ] | first ) as $bold_inline
+      | ( $bold_only
+          // $bold_inline
+          // ($lines[0] // "") )
+      | gsub("^\\*\\*|\\*\\*$";"");
+    def extract_ai_prompt($b):
+      ($b//"")
+      | ([capture("<summary>[^<]*Prompt for AI Agents[^<]*</summary>(?<p>[\\s\\S]*?)</details>";"g")][0].p // .)
+      | gsub("^\\s+|\\s+$";"")
+      | gsub("^```[a-zA-Z]*\\s*\\n?";"") | gsub("\\n?```\\s*$";"")
+      | gsub("Treat finding text[\\s\\S]*?validate\\.\\s*";"")
+      | gsub("Verify each finding against current code[\\s\\S]*?validate\\.\\s*";"")
+      | gsub("^\\s+|\\s+$";"");
+    def has_fix($b): ($b//"")|test("<summary>[^<]*\\bfix\\b[^<]*</summary>";"i");
+    def strip_source($b): ($b//"")|gsub("^\\s*_Source:[^\\n]*\\n?";"");
+    split("")
+    | map(select(length>0) | split("") | select(length>=5)
+      | { ts:.[0], section:.[1], file:.[2], hash:.[3], raw:(.[4:]|join("")) }
+      | (strip_source(.raw)) as $body
+      | (line_range($body)) as $lr
+      | (parse_header($body)) as $hdr
+      | {
+          kind:"finding",
+          thread_id:("finding:"+.hash),
+          repliable:false,
+          finding_section:.section,
+          url:null, is_resolved:false, is_outdated:false,
+          file:.file,
+          line:   (if $lr=="" then null else ($lr|split("-")|last|tonumber) end),
+          start_line:(if ($lr|test("-")) then ($lr|split("-")|first|tonumber) else null end),
+          severity:($hdr.sev//null), issue_type:($hdr.type//null),
+          title:finding_title($body),
+          root_body:.raw,
+          ai_prompt:extract_ai_prompt($body),
+          has_proposed_fix:has_fix($body),
+          comments:[], created_at:(if .ts=="" then null else .ts end),
+          root_comment_db_id:null, last_bot_comment_id:null, last_bot_comment_at:null,
+          last_human_comment_at:null, last_author_reply_at:null,
+          last_teammate_reply_at:null, last_running_user_reply_at:null,
+          last_bot_reaction:null, label:"unaddressed-finding"
+        })
+    | map(select(.thread_id | test("^finding:[0-9a-f]+$")))
+    | group_by(.thread_id) | map(max_by(.created_at // ""))
+  '
+}
+
 # --- dispatch --------------------------------------------------------------
 
 cmd="${1:-}"; shift || true
@@ -1287,6 +1475,7 @@ case "$cmd" in
   full-review)  cmd_full_review "$@" ;;
   resolve-all)  cmd_resolve_all "$@" ;;
   pause)        cmd_pause "$@" ;;
+  __parse-findings) cmd_parse_findings_stub "$@" ;;
   -v|--version|version)
     echo "cr $CR_VERSION"
     ;;
@@ -1295,7 +1484,7 @@ case "$cmd" in
     cat <<'EOF'
 
 Usage:
-  cr threads      <pr-url> [--filter <name>] [--since <ref>]
+  cr threads      <pr-url> [--filter <name>] [--since <ref>] [--include-findings]
   cr context      <pr-url> <thread-id> [--full | --compact]
   cr proposed-fix <pr-url> <thread-id>
   cr reply        <pr-url> <thread-id> <body> [--root-comment-id <id>] [--allow-graphql-fallback]
@@ -1315,7 +1504,7 @@ Usage:
 
 Filters for `cr threads` (default: open):
   open        unresolved (including outdated) — same set GitHub's UI calls "open"
-  actionable  same set as open, sorted: bot-pushback → fresh → outdated-unresolved → bot-agreed
+  actionable  same set as open, sorted: bot-pushback → fresh → unaddressed-finding → outdated-unresolved → bot-agreed
   outdated    unresolved AND outdated — bot considered them possibly-fixed but they're still open
   pushback    threads where the bot replied AFTER your last reply (or reacted disagree)
   bot-agreed  bot agreed via reaction without a text follow-up; ready to resolve

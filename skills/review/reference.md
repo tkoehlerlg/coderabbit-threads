@@ -18,7 +18,7 @@ Resource-not-found (a PR or thread that doesn't exist) is **exit 1**, not 2 — 
 ## `cr threads`
 
 ```
-cr threads <pr-url> [--filter open|all|outdated|pushback|bot-agreed|actionable] [--since <ref>]
+cr threads <pr-url> [--filter open|all|outdated|pushback|bot-agreed|actionable] [--since <ref>] [--include-findings]
 ```
 
 Fetch all CodeRabbit review threads on the PR, fully paginated, filtered, normalized.
@@ -28,15 +28,23 @@ Fetch all CodeRabbit review threads on the PR, fully paginated, filtered, normal
 | Filter | Threads included |
 |--------|-------------------|
 | `open` (default) | `is_resolved == false` — same set GitHub's UI calls "open"; includes outdated threads (they are still unresolved). |
-| `actionable` | Same set as `open`, sorted: `bot-pushback` → fresh → `outdated-unresolved` → `bot-agreed`. Use when you want a triage-ordered view instead of GitHub-ordered. |
+| `actionable` | Same set as `open`, sorted: `bot-pushback` → fresh → `unaddressed-finding` → `outdated-unresolved` → `bot-agreed`. Use when you want a triage-ordered view instead of GitHub-ordered. |
 | `outdated` | `is_outdated == true && is_resolved == false` — outdated subset of `open`, for audit runs. |
 | `pushback` | `label == "bot-pushback"` |
 | `bot-agreed` | `label == "bot-agreed"` — bot agreed via reaction, ready to resolve |
 | `all` | every CodeRabbit thread (including resolved) |
 
-`actionable` is the right filter for **second-and-later runs on a long-lived PR**: it returns every open thread (same set as `open`) but sorted by priority — `bot-pushback` first (live conversations), then fresh threads needing attention, then `outdated-unresolved` (likely-fixed audit cases), then `bot-agreed` (one-click cleanup). Reach for it when the user re-runs the skill after a follow-up commit on a PR that already had a review pass.
+`actionable` is the right filter for **second-and-later runs on a long-lived PR**: it returns every open thread (same set as `open`) but sorted by priority — `bot-pushback` first (live conversations), then fresh threads needing attention, then `unaddressed-finding` (out-of-diff findings, if `--include-findings` is set), then `outdated-unresolved` (likely-fixed audit cases), then `bot-agreed` (one-click cleanup). Reach for it when the user re-runs the skill after a follow-up commit on a PR that already had a review pass.
 
 Threads whose root comment is not authored by CodeRabbit (`coderabbitai`, `coderabbitai[bot]`, `coderabbit`, `coderabbit[bot]`) are excluded unconditionally.
+
+### `--include-findings`
+
+Off by default. When set, merges CodeRabbit's **out-of-diff review-body findings** into the output alongside real threads: the `Outside diff range comments` and `Duplicate comments` sections that CodeRabbit posts in its PR-level review body rather than as inline review threads. These never surface through `cr context` or `cr check` — both reject a `finding:` id outright (`'<id>' is an out-of-diff finding, not a repliable thread — it has no reply/resolve/context. Fix the code directly.`) — because a finding has no GitHub thread node to reply on or resolve. Read `root_body` / `ai_prompt` straight off the `cr threads` entry and fix the code directly; there's no reply/resolve loop for findings.
+
+Findings are carried by `open`, `all`, and `actionable`; the `pushback`, `bot-agreed`, and `outdated` filters exclude them, since those match on conversation-state labels or `is_outdated`, which a finding never has.
+
+Findings recurring across multiple CodeRabbit reviews are deduplicated by content hash, keeping the newest review's copy.
 
 ### `--since <ref>`
 
@@ -51,6 +59,8 @@ Drop threads whose root comment is older than `<ref>`. Applied **after** the fil
 Bad input — a string that matches none of the three forms, or a SHA that isn't in the local repo — is exit code 1 with a clear stderr message.
 
 **Use case:** multi-round PRs. After CodeRabbit's second review pass, `cr threads --filter open --since <head-of-previous-push>` returns only the new threads, so the skill can handle the latest round without re-walking ones it already replied to.
+
+With `--include-findings`, findings are filtered by `--since` on the same field, `created_at` — for a finding this is the CodeRabbit review's submit time (`submittedAt`), not a comment timestamp, since findings have no comments of their own.
 
 ### Output shape
 
@@ -88,6 +98,48 @@ Bad input — a string that matches none of the three forms, or a SHA that isn't
 ]
 ```
 
+### `kind`, `repliable`, and out-of-diff findings
+
+Every entry carries a `kind` field, `"thread"` or `"finding"`. Real threads (the shape above) have `kind: "thread"` and no `repliable` field at all — the field only exists to flag the exception. Findings — emitted only when `cr threads` is called with `--include-findings` — have `kind: "finding"` and `repliable: false`:
+
+```json
+{
+  "kind": "finding",
+  "thread_id": "finding:9f2a1c7e",
+  "repliable": false,
+  "finding_section": "outside-diff",
+  "url": null,
+  "is_resolved": false,
+  "is_outdated": false,
+  "file": "apps/api/src/foo.ts",
+  "line": 88,
+  "start_line": null,
+  "severity": "medium",
+  "issue_type": "refactor_suggestion",
+  "title": "Unused import left behind",
+  "root_body": "<markdown of the finding as it appeared in the review body>",
+  "ai_prompt": "<extracted AI-prompt text for this finding, if present>",
+  "comments": [],
+  "created_at": "2026-05-12T14:20:00Z",
+  "has_proposed_fix": false,
+  "root_comment_db_id": null,
+  "last_bot_comment_id": null,
+  "last_bot_comment_at": null,
+  "last_human_comment_at": null,
+  "last_author_reply_at": null,
+  "last_teammate_reply_at": null,
+  "last_running_user_reply_at": null,
+  "last_bot_reaction": null,
+  "label": "unaddressed-finding"
+}
+```
+
+- `thread_id` is `finding:<hash>` — a content hash, not a GitHub node id. There is no GitHub thread behind it.
+- `finding_section` is `"outside-diff"` (from CodeRabbit's "Outside diff range comments" section) or `"duplicate"` (from "Duplicate comments"). Only present on findings; `null`/absent on real threads.
+- `created_at` is the CodeRabbit review's submit time (`submittedAt`), not a comment timestamp.
+- All conversation-state fields — `url`, `comments`, `root_comment_db_id`, `last_bot_comment_id`, `last_bot_comment_at`, `last_human_comment_at`, `last_author_reply_at`, `last_teammate_reply_at`, `last_running_user_reply_at`, `last_bot_reaction` — are `null` or empty on a finding. There's no comment thread to have state on.
+- `is_resolved` and `is_outdated` are always `false` on a finding (never `null`) — this is what keeps findings inside `open`/`actionable` and out of `outdated`.
+
 ### Reactions
 
 CodeRabbit increasingly acknowledges a reply with a GitHub reaction instead of a text comment. Each entry in `comments[].reactions` is a raw GitHub reaction (`content`, `user`, `created_at`), and `last_bot_reaction` is the most recent **bot** reaction on the most recent **human** comment, classified into a `signal`:
@@ -107,7 +159,7 @@ Reactions never carry text, so `signal == "agree"` is the strongest "you can clo
 
 ### Computed `label` values
 
-`resolved` takes precedence over all other labels. The remaining four are **conversation-state** labels that describe what happens next in the bot conversation, independent of who's running the skill. They only apply to **unresolved** threads.
+`resolved` takes precedence over all other labels. Five of the rest are **conversation-state** labels that describe what happens next in the bot conversation, independent of who's running the skill; they only apply to **unresolved** threads. `unaddressed-finding` is not a conversation-state label — see its row below.
 
 | Label | Precondition | Condition |
 |-------|--------------|-----------|
@@ -117,6 +169,7 @@ Reactions never carry text, so `signal == "agree"` is the strongest "you can clo
 | `awaiting-bot` | `is_resolved == false` | Any human's last comment is strictly after the bot's, and no bot reaction (or only `pending` / 👀) on that comment |
 | `untouched` | `is_resolved == false` | Only bot comments, no human reply yet |
 | `outdated-unresolved` | `is_resolved == false` | `is_outdated == true` (bot likely considered the code fixed but the thread wasn't closed) |
+| `unaddressed-finding` | `kind == "finding"` | Always, unconditionally — every out-of-diff finding gets this label. Not a conversation-state label; a finding has no comments to converse in, so this label never transitions to any other value. Only appears when `cr threads` is called with `--include-findings`. |
 
 **Two axes, not one.** v0.3.2 split the previous "any human" model into two orthogonal axes:
 
